@@ -32,10 +32,10 @@ What this fork adds or changes:
 - **Settings rebuilt as a category rail.** Thirteen stacked sections became six pages, plus a
   dedicated **LAN Sync** page, so the dialog is a set of categories rather than one long scroll.
 
-Known gaps in this fork, both deliberate and recorded in `docs/`: the exit-panel OCR still only
-matches English exit names, so **Read exits from screenshot** does nothing on a Chinese game
-client; and the WebSync browser page is Simplified Chinese only, whatever language the desktop is
-in. See **Known gaps**, near the end of *What it does*.
+Known gaps in this fork, both deliberate and recorded in `docs/`: reading exits from a screenshot
+has to be told what language your *game client* is in, and two exit names can still be missed on a
+Chinese client; and the WebSync browser page is Simplified Chinese only, whatever language the
+desktop is in. See **Known gaps**, near the end of *What it does*.
 
 The [Simplified Chinese version](README.zh-CN.md) is machine-translated by AI and reviewed by hand;
 this English one is the source of truth wherever the two disagree.
@@ -101,8 +101,9 @@ offers a translation, so `ZB-1011` reads as `ZB-1011` and not as a translated bu
 exit condition is drawn as a single line in the active language, not as Chinese over an English
 echo.
 
-The one thing language does not reach is the extraction-panel OCR, which still matches against the
-English exit names — see **Known gaps** below.
+The extraction panel is read in whatever language your **game client** is set to, which is a
+setting of its own — the two are independent on purpose, so an English desktop driving a Chinese
+client (or the reverse) works. See **Known gaps** below for what still gets missed.
 
 **Exits, with their conditions.** Every exit is shown, colored by faction. Conditional exits are
 ringed on the map and flagged in the list, and selecting one tells you what it needs:
@@ -114,9 +115,10 @@ ringed on the map and flagged in the list, and selecting one tells you what it n
 
 **Only the exits you actually have.** Tarkov offers a different subset of a map's exits every raid,
 depending on where you spawned — Customs has 27, and a given raid might give you four. Tick
-**Read exits from screenshot** in the exits panel, bring the extraction list up in game (double-tap
-<kbd>O</kbd> by default) and take a screenshot: the app reads the list off the picture and fades
-every exit the game did not offer you.
+**Read exits from screenshot** in the exits panel, tell it what language your game client is in with
+**Game client** in the same panel, bring the extraction list up in game (double-tap <kbd>O</kbd> by
+default) and take a screenshot: the app reads the list off the picture and fades every exit the game
+did not offer you.
 
 Exits are faded, never hidden, and stay clickable — the list comes from character recognition, and
 a misread should cost you a dim marker, not a missing one. Anything it reads but cannot place is
@@ -429,12 +431,13 @@ Chinese only, whatever the desktop is set to.
 
 **Known gaps.** Two, both written up rather than papered over:
 
-- **The exit-panel OCR is English-only, and it is not only the matching.** With a Chinese game
-  client four separate links break in sequence: the Windows engine is pinned to `en-US`, the panel
-  parser rejects any screenshot without an English id keyword, candidates come from the English
-  exit names, and the match thresholds are tuned for long English strings rather than short
-  Chinese ones. **Read exits from screenshot** therefore finds nothing at all. The gap has been
-  assessed and phased; only the threshold step is still waiting on real screenshots — see
+- **Screenshot exit reading works on a Chinese game client, with two names still missed.** It takes
+  its own **Game client** language setting, and Chinese needs the matching Windows OCR language pack
+  installed. Two names are known to slip: `ZB-1013`, whose Latin-and-digit glyphs the engine cannot
+  resolve at native resolution, and any exit whose name differs from another only by `0` versus `2`
+  (`Gate 0` read as `2号门`) — the latter is *refused rather than guessed*, because a wrong marker on
+  the wrong side of the map is worse than a dim one. Verified on five real Chinese-client frames;
+  the measurements and the traps that guard them are in
   `docs/localization-ocr-chinese-backlog.md`.
 - **Rendering is expensive.** Measured 15–43 ms per frame with a full overlay set, and the arrow
   animation runs a 20 fps clock for the whole raid whenever a route has two or more waypoints. It
@@ -567,7 +570,7 @@ does not hand out anyone's IP.
 | --- | --- |
 | [`docs/websync-implementation-spec.md`](docs/websync-implementation-spec.md) | The LAN mirror's design and routes, marked delivered. |
 | [`docs/eval-security-and-lan-sync.md`](docs/eval-security-and-lan-sync.md) | Why the LAN mirror binds the way it does, and what an attacker on your network could and could not reach. |
-| [`docs/localization-ocr-chinese-backlog.md`](docs/localization-ocr-chinese-backlog.md) | The Chinese OCR gap: assessed, phased, and blocked only on real screenshots for the thresholds. |
+| [`docs/localization-ocr-chinese-backlog.md`](docs/localization-ocr-chinese-backlog.md) | Chinese OCR support: shipped, with the measured thresholds and the traps that guard it. |
 | [`docs/render-performance-backlog.md`](docs/render-performance-backlog.md) | Measured frame costs and the prioritized optimization list. |
 | [`AGENTS.md`](AGENTS.md) | Notes for anyone — human or agent — changing this codebase. |
 

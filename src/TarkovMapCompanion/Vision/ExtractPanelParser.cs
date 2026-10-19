@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace TarkovMapCompanion.Vision;
@@ -114,6 +115,50 @@ public static partial class ExtractPanelParser
     private static readonly string[] IdKeywords = ["EXTRACT", "TRANSIT", "EXFIL", "EXIT"];
 
     /// <summary>
+    /// The Chinese id column: the token the game uses for each section, then the one or two
+    /// digit-like characters the reader supplies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The token is the game's own wording, confirmed against real 2026 client frames: <c>撤离点</c>
+    /// for a PMC exit, <c>退出</c> for a Scav exit, and <c>转移点</c> for a transit. The backlog's
+    /// language-table prediction of <c>目的地</c> for transits was wrong; the panel really says
+    /// <c>转移点</c>.
+    /// </para>
+    /// <para>
+    /// It is matched against a compacted copy of the line, because the reader puts a space between
+    /// every Chinese character ("撤 离 点 亿 1"). A leading non-letter run absorbs the stray
+    /// punctuation a row sometimes picks up ("、 转 移 点 21").
+    /// </para>
+    /// </remarks>
+    [GeneratedRegex(
+        @"^[^\p{L}\p{N}]*?(?<kind>撤离点|退出|转移点)(?<digits>[0-9匠亿@弓弱日]{0,2})",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex CjkIdPrefix();
+
+    /// <summary>
+    /// A Chinese row whose id token was damaged or merged past recognition.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two shapes. The token may keep its first character and lose the rest ("转2前往立交桥"), or the
+    /// reader may mangle that first character but keep the "移点" of 转移点 ("车专移点1前往储备站").
+    /// </para>
+    /// <para>
+    /// It must stay this specific rather than "any few CJK characters then digits": a loose version
+    /// matches hotbar noise like "弓22/322", which then becomes an anchor and drags every HUD label
+    /// into the panel. Only ever a fallback reading; the match decides which reading is an exit name.
+    /// </para>
+    /// </remarks>
+    [GeneratedRegex(
+        @"^[^\p{L}\p{N}]*?(?<kind>[撤离退转][\p{L}]{0,3}|[\p{L}]{0,2}移点)(?<digits>[0-9匠亿@弓弱日]{1,2})",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex CjkIdLoose();
+
+    /// <summary>Keywords that begin a Chinese id column.</summary>
+    private static readonly string[] CjkIdKeywords = ["撤离点", "退出", "转移点"];
+
+    /// <summary>
     /// A trailing countdown, e.g. "0:00:54".
     /// </summary>
     /// <remarks>
@@ -128,6 +173,39 @@ public static partial class ExtractPanelParser
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TrailingTimer();
 
+    /// <summary>
+    /// A Chinese countdown whose separators survived, e.g. "匠 34 ： 57" or "匠亿匠 57".
+    /// </summary>
+    /// <remarks>
+    /// The engine reports the digits as glyphs it invents (匠/亿/@) and frequently drops the colons
+    /// entirely. Without stripping these the remains glue onto the name -- "前往森林匠@匠57" -- and
+    /// the row falls below the match floor for a reason that has nothing to do with the name.
+    /// </remarks>
+    [GeneratedRegex(
+        @"(?:[匠亿@弓弱日]){0,3}\d{1,2}[:：](?:[匠亿@弓弱日]){0,3}\d{1,2}(?:[:：](?:[匠亿@弓弱日]){0,3}\d{1,2})?\s*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingCjkTimerWithSeparator();
+
+    /// <summary>
+    /// A Chinese countdown whose colons were lost entirely, e.g. "匠亿匠57" ("0:00:57") or "匠2匠54".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reader mixes real digits into the invented glyphs arbitrarily -- captured "匠2匠54" sits
+    /// beside "匠亿匠57" -- so the run is any blend of the confusion glyphs and digits, ending in
+    /// one or two digits.
+    /// </para>
+    /// <para>
+    /// It has to start with a glyph, not merely contain one. Allowing a leading digit would let the
+    /// run begin inside a real name: "ZB-1013匠亿匠57" would match from the 3 in "1013" and eat the
+    /// name's digits. Requiring the glyph first leaves "ZB-1013" untouched, and the earlier bug --
+    /// "any non-ASCII" matching the last character of "前往储备站" -- cannot come back because only
+    /// the specific confusion glyphs are in the class, never arbitrary ideographs.
+    /// </para>
+    /// </remarks>
+    [GeneratedRegex(@"[匠亿@弓弱日][匠亿@弓弱日0-9]*\d{1,2}\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingCjkTimer();
+
     public static ExtractPanelReading Parse(IReadOnlyList<OcrLine> lines)
     {
         var usable = lines.Where(l => !string.IsNullOrWhiteSpace(l.Text)).ToArray();
@@ -137,12 +215,19 @@ public static partial class ExtractPanelParser
         // Anchor on the id column. Every row of the panel starts with one, so the leftmost id tells
         // us where the panel begins -- which is the only reliable way to discard the hotbar and
         // weapon labels that share the top of the frame and would otherwise be merged into a row.
-        var idLines = usable.Where(l => IdPrefix().IsMatch(l.Text.TrimStart())).ToArray();
-        if (idLines.Length == 0)
+        //
+        // A header alone can still prove the panel is open, so it is an acceptable anchor when the
+        // id column was read but produced nothing recognizable.
+        var idLines = usable.Where(l => LooksLikeIdLine(l.Text.TrimStart())).ToArray();
+        var anchorLines = idLines.Length > 0
+            ? idLines
+            : usable.Where(l => LooksLikeHeader(l.Text)).ToArray();
+
+        if (anchorLines.Length == 0)
             return ExtractPanelReading.NotFound;
 
-        var panelLeft = idLines.Min(l => l.Bounds.X);
-        var slack = Math.Max(12.0, idLines.Average(l => l.Bounds.Height) * 0.75);
+        var panelLeft = anchorLines.Min(l => l.Bounds.X);
+        var slack = Math.Max(12.0, anchorLines.Average(l => l.Bounds.Height) * 0.75);
 
         // Judged on the middle of the text, not its left edge. A row whose id picks up a stray
         // glyph from the panel border starts slightly outside and would be dropped whole, while a
@@ -159,6 +244,13 @@ public static partial class ExtractPanelParser
         foreach (var group in GroupIntoRows(inPanel))
         {
             var raw = string.Join(" ", group.OrderBy(l => l.Bounds.X).Select(l => l.Text.Trim()));
+
+            // A requirement sub-line ("需要 TerraGroup 实验室访问钥匙卡（1）") belongs to the row
+            // above it. Reported as a row of its own it would look like an exit that failed to
+            // match, which is exactly the message that has to stay trustworthy.
+            if (IsRequirementLine(raw))
+                continue;
+
             var row = Classify(raw);
 
             if (row.Kind == PanelRowKind.ListHeader)
@@ -221,14 +313,19 @@ public static partial class ExtractPanelParser
     {
         var text = raw.Trim();
 
-        // Headers first: they carry no id, and the wording says whether this is the list of exits
-        // or the banner for the one being used.
+        // The active-extraction banner shares 撤离点 with the list header and its rows are numbered
+        // exactly like the list's, so only the wording separates them. "Stay" is the English veto;
+        // "停留" and "回到" are its Chinese counterparts. Checked before the id column because a
+        // Chinese banner row also begins with the id token.
         var normalized = NameMatcher.Normalize(text);
-        if (normalized.Contains("extraction point", StringComparison.Ordinal))
+        var activeEnglish = normalized.Contains("extraction point", StringComparison.Ordinal)
+            && normalized.Contains("stay", StringComparison.Ordinal);
+
+        if (activeEnglish
+            || normalized.Contains("停留", StringComparison.Ordinal)
+            || normalized.Contains("回到", StringComparison.Ordinal))
         {
-            return normalized.Contains("stay", StringComparison.Ordinal)
-                ? new PanelRow(PanelRowKind.ActiveHeader, "", text)
-                : new PanelRow(PanelRowKind.ListHeader, "", text);
+            return new PanelRow(PanelRowKind.ActiveHeader, "", text);
         }
 
         var kind = PanelRowKind.Unknown;
@@ -249,28 +346,65 @@ public static partial class ExtractPanelParser
             // Stripping the id worked, so that is the best guess.
             readings.Add(Clean(text[match.Length..]));
         }
+        else if (TryStripCjkId(Compact(text), out var cjkKind, out var cjkRests))
+        {
+            kind = cjkKind;
+
+            foreach (var rest in cjkRests)
+            {
+                if (rest.Length > 0)
+                    readings.Add(Clean(rest));
+            }
+
+            if (readings.Count == 0)
+            {
+                // The id survived but the name did not. Keeping the whole text as a reading would
+                // turn the id itself into a name; an empty row is honest.
+                return new PanelRow(PanelRowKind.Unknown, "", text) { HasIdKeyword = true };
+            }
+        }
+        else if (normalized.Contains("extraction point", StringComparison.Ordinal)
+            || normalized.Contains("找到撤离点", StringComparison.Ordinal))
+        {
+            // No id, but the wording says this is the list's own banner.
+            return new PanelRow(PanelRowKind.ListHeader, "", text);
+        }
         else
         {
-            // It did not, so the whole row is the best guess -- and it may genuinely be one, for a
-            // row whose id the reader dropped completely.
+            // The id did not strip, so the whole row is the best guess -- and it may genuinely be
+            // one, for a row whose id the reader dropped completely.
             readings.Add(Clean(text));
         }
 
         // Fallbacks for an id mangled past recognition: drop the first token, and the first two
         // when the second is short enough to be a stray digit rather than part of a name.
+        //
+        // Only meaningful for the English column, where a "token" is a word. Splitting a Chinese
+        // line on the reader's spaces yields single characters, so "撤 离 点" would fall back to
+        // "离 点" -- a fragment of the id masquerading as a name.
         var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         // Contains rather than StartsWith: a stray glyph in front of the id ("WEXFIL01") is common
         // enough, and it defeats an anchored pattern while leaving the keyword perfectly visible.
-        var hasKeyword = tokens.Length > 0
-            && IdKeywords.Any(k => tokens[0].Contains(k, StringComparison.OrdinalIgnoreCase));
+        var compact = Compact(text);
+        var hasKeyword = (tokens.Length > 0
+                && IdKeywords.Any(k => tokens[0].Contains(k, StringComparison.OrdinalIgnoreCase)))
+            || CjkIdKeywords.Any(k => compact.Contains(k, StringComparison.Ordinal));
 
-        if (tokens.Length > 1 && hasKeyword)
+        if (!NameMatcher.ContainsCjk(text) && tokens.Length > 1 && hasKeyword)
         {
             readings.Add(Clean(string.Join(' ', tokens.Skip(1))));
 
             if (tokens.Length > 2 && tokens[1].Length <= 3)
                 readings.Add(Clean(string.Join(' ', tokens.Skip(2))));
+        }
+
+        // The damaged-token reading ("转2前往立交桥" -> "前往立交桥") is a guess that only the match
+        // can validate, so it is offered alongside the full-token strip rather than instead of it.
+        if (CjkIdLoose().Match(compact) is { Success: true } loose
+            && loose.Length < compact.Length)
+        {
+            readings.Add(Clean(compact[loose.Length..]));
         }
 
         readings.Add(Clean(text));
@@ -285,5 +419,110 @@ public static partial class ExtractPanelParser
             : new PanelRow(kind, distinct[0], text, distinct) { HasIdKeyword = hasKeyword };
     }
 
-    private static string Clean(string value) => TrailingTimer().Replace(value, "").Trim();
+    /// <summary>
+    /// Whether a line looks like the panel's own banner.
+    /// </summary>
+    private static bool LooksLikeHeader(string text)
+    {
+        var normalized = NameMatcher.Normalize(text);
+
+        return normalized.Contains("extraction point", StringComparison.Ordinal)
+            || normalized.Contains("找到撤离点", StringComparison.Ordinal)
+            || normalized.Contains("停留", StringComparison.Ordinal)
+            || normalized.Contains("回到", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether a line begins the id column, in either language.
+    /// </summary>
+    private static bool LooksLikeIdLine(string text) =>
+        IdPrefix().IsMatch(text) || (NameMatcher.ContainsCjk(text) && TryStripCjkId(Compact(text), out _, out _));
+
+    /// <summary>
+    /// Strips a Chinese id from a compacted line, in either the intact or the damaged-token form.
+    /// </summary>
+    /// <remarks>
+    /// Returns every digit-count strip, longest first, rather than only the greedy one. The reader
+    /// sometimes loses the id's digits while keeping the token -- under a tighter crop
+    /// "撤离点03 0号门" reads as "撤离点 2号门" -- and a rule that always consumes up to two
+    /// digit-like characters then eats the name's own leading digit ("号门"). Offering the shorter
+    /// strips as fallback readings lets the match recover the name without weakening the id case.
+    /// </remarks>
+    private static bool TryStripCjkId(string compact, out PanelRowKind kind, out IReadOnlyList<string> rests)
+    {
+        kind = PanelRowKind.Unknown;
+        rests = [];
+
+        if (CjkIdPrefix().Match(compact) is { Success: true } full)
+        {
+            kind = CjkKind(full.Groups["kind"].Value);
+            rests = StripsAfter(compact, full.Groups["digits"]);
+            return true;
+        }
+
+        if (CjkIdLoose().Match(compact) is { Success: true } loose)
+        {
+            kind = CjkKind(loose.Groups["kind"].Value);
+            rests = StripsAfter(compact, loose.Groups["digits"]);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Every name that results from keeping 0..n of the id's captured digits, longest strip first.
+    /// </summary>
+    private static List<string> StripsAfter(string compact, Group digits)
+    {
+        var list = new List<string>(digits.Length + 1);
+
+        for (var kept = digits.Length; kept >= 0; kept--)
+            list.Add(compact[(digits.Index + kept)..]);
+
+        return list;
+    }
+
+    /// <summary>
+    /// Which section an id token belongs to. Transit is recognised by the surviving "移" (the reader
+    /// misreads a damaged 转移点 as 车专移点 or 有专移点, but keeps the middle character), and by a
+    /// lone leading 转 when the rest of the token was lost entirely.
+    /// </summary>
+    private static PanelRowKind CjkKind(string token) =>
+        token.Contains('移') || token.StartsWith('转')
+            ? PanelRowKind.Transit
+            : PanelRowKind.Extract;
+
+    /// <summary>Whether a line is a row's requirement sub-line rather than a row of its own.</summary>
+    private static bool IsRequirementLine(string raw)
+    {
+        var normalized = NameMatcher.Normalize(raw);
+
+        return normalized.StartsWith("需要", StringComparison.Ordinal)
+            || normalized.StartsWith("requires", StringComparison.Ordinal)
+            || normalized.StartsWith("needs", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Removes the reader's spaces from a line, so a Chinese id can be matched against its token.
+    /// </summary>
+    private static string Compact(string value)
+    {
+        if (!NameMatcher.ContainsCjk(value))
+            return value;
+
+        var builder = new StringBuilder(value.Length);
+
+        foreach (var ch in value)
+        {
+            if (!char.IsWhiteSpace(ch))
+                builder.Append(ch);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string Clean(string value) =>
+        TrailingCjkTimerWithSeparator().Replace(
+            TrailingCjkTimer().Replace(TrailingTimer().Replace(value, ""), ""), "").Trim();
 }

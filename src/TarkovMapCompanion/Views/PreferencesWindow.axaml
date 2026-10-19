@@ -331,6 +331,18 @@
                   <TextBlock Classes="secondary" FontSize="11" TextWrapping="Wrap"
                              Text="{loc:Tr Prefs.ExitFilterHint}" />
 
+                  <!--
+                    The language the game client draws its extraction panel in. Deliberately its own
+                    setting rather than following the app's UI language: the two are independent, and
+                    a Chinese client with an English UI is exactly the case this exists for.
+                  -->
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Name="OcrLanguageLabel" Text="{loc:Tr Prefs.OcrLanguageLabel}" VerticalAlignment="Center" Width="70" FontSize="12" />
+                    <ComboBox Name="OcrLanguageBox" Width="160" />
+                  </StackPanel>
+                  <TextBlock Name="OcrLanguageHint" Classes="secondary" FontSize="11" TextWrapping="Wrap"
+                             Text="{loc:Tr Prefs.OcrLanguageHint}" />
+
                   <CheckBox Name="ShowConditionsBox" Content="{loc:Tr Prefs.ShowConditions}" />
                   <TextBlock Classes="secondary" FontSize="11" TextWrapping="Wrap"
                              Text="{loc:Tr Prefs.ShowConditionsHint}" />

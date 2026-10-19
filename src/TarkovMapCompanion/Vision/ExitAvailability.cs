@@ -90,12 +90,31 @@ public sealed class ExitAvailability
         if (!reading.PanelFound)
             return null;
 
-        var candidates = exits
-            .Select(p => NameMatcher.Normalize(p.Name))
-            .Where(n => n.Length > 0)
-            .ToHashSet(StringComparer.Ordinal);
+        // Candidates are a map from the string that can be read on the panel to the POI's canonical
+        // English name. Both names are surfaces: the game shows the Chinese name on a Chinese
+        // client, but _names stores English and Includes looks a POI up by its English Name. Adding
+        // the Chinese names to a flat candidate set would let a Chinese hit be stored as
+        // "17号仓库", and then Includes would return false for every POI -- the feature would die
+        // silently while the tests stayed green.
+        var surfaces = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        if (candidates.Count == 0)
+        foreach (var poi in exits)
+        {
+            var canonical = NameMatcher.Normalize(poi.Name);
+            if (canonical.Length == 0)
+                continue;
+
+            surfaces[canonical] = canonical;
+
+            if (!string.IsNullOrWhiteSpace(poi.NameZh))
+            {
+                var chinese = NameMatcher.Normalize(poi.NameZh);
+                if (chinese.Length > 0)
+                    surfaces[chinese] = canonical;
+            }
+        }
+
+        if (surfaces.Count == 0)
             return null;
 
         var matched = new HashSet<string>(StringComparer.Ordinal);
@@ -106,10 +125,20 @@ public sealed class ExitAvailability
             if (string.IsNullOrWhiteSpace(row.Name))
                 continue;
 
-            if (Best(row, candidates) is { } match)
-                matched.Add(match.NormalizedName);
-            else if (row.LooksLikeAnExitRow)
-                unresolved.Add(row.Name);
+            if (Best(row, surfaces.Keys) is { } match)
+            {
+                if (surfaces.TryGetValue(match.NormalizedName, out var canonical))
+                    matched.Add(canonical);
+
+                Trace("ACCEPT", row, match);
+            }
+            else
+            {
+                Trace("REJECT", row, BestRaw(row, surfaces.Keys));
+
+                if (row.LooksLikeAnExitRow)
+                    unresolved.Add(row.Name);
+            }
 
             // A row with no id keyword that matches nothing is almost certainly not a row at all --
             // a hotbar label the panel happens to sit near. Reporting those as unrecognized exits
@@ -130,7 +159,7 @@ public sealed class ExitAvailability
     /// readings will look like an exit name. Trying all of them and keeping the strongest costs a
     /// few string comparisons and turns an unreadable id into a non-event.
     /// </remarks>
-    private static NameMatch? Best(PanelRow row, IReadOnlySet<string> candidates)
+    private static NameMatch? Best(PanelRow row, IEnumerable<string> candidates)
     {
         NameMatch? best = null;
 
@@ -140,6 +169,43 @@ public sealed class ExitAvailability
                 continue;
 
             if (NameMatcher.Match(reading, candidates) is { } match
+                && (best is null || match.Score > best.Score))
+            {
+                best = match;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Debug output for threshold tuning, enabled with <c>TMC_TRACE_MATCH=1</c>.
+    /// </summary>
+    /// <remarks>
+    /// Prints the raw best score and margin even when the row was rejected, so a missed exit can be
+    /// told apart from a misread one. Silent unless the environment variable is set.
+    /// </remarks>
+    private static void Trace(string verdict, PanelRow row, NameMatch? match)
+    {
+        if (Environment.GetEnvironmentVariable("TMC_TRACE_MATCH") is not { Length: > 0 })
+            return;
+
+        Console.Error.WriteLine(match is null
+            ? $"[match] {verdict} '{row.Name}' -> none"
+            : $"[match] {verdict} '{row.Name}' -> '{match.NormalizedName}' score={match.Score:F3} margin={match.Margin:F3}");
+    }
+
+    /// <summary>The best reading ignoring both thresholds, for the rejection trace.</summary>
+    private static NameMatch? BestRaw(PanelRow row, IEnumerable<string> candidates)
+    {
+        NameMatch? best = null;
+
+        foreach (var reading in row.NameCandidates)
+        {
+            if (string.IsNullOrWhiteSpace(reading))
+                continue;
+
+            if (NameMatcher.Match(reading, candidates, floor: 0.0, margin: 0.0) is { } match
                 && (best is null || match.Score > best.Score))
             {
                 best = match;

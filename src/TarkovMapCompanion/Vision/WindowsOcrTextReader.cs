@@ -37,7 +37,16 @@ public sealed class WindowsOcrTextReader : IScreenTextReader
 
     private readonly OcrEngine? _engine;
 
-    public WindowsOcrTextReader()
+    /// <param name="languageTag">
+    /// Windows language tag for the OCR engine, e.g. <c>zh-Hans</c> or <c>en-US</c>. Null keeps the
+    /// old preference: English first, then whatever the user's profile has.
+    /// </param>
+    /// <remarks>
+    /// The tag describes the <em>game client's</em> language, not this app's UI language. Reading a
+    /// Chinese panel with an English engine does not degrade gracefully -- it produces confidently
+    /// wrong Latin and Cyrillic garbage, which the fuzzy matcher then treats as unmatched names.
+    /// </remarks>
+    public WindowsOcrTextReader(string? languageTag = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -47,10 +56,7 @@ public sealed class WindowsOcrTextReader : IScreenTextReader
 
         try
         {
-            // Prefer English: the extract names we match against are the English ones. Fall back to
-            // whatever the user has so a non-English install still gets a chance.
-            _engine = OcrEngine.TryCreateFromLanguage(new Language("en-US"))
-                      ?? OcrEngine.TryCreateFromUserProfileLanguages();
+            _engine = languageTag is null ? PreferredEngine() : EngineFor(languageTag);
         }
         catch (Exception ex)
         {
@@ -61,9 +67,41 @@ public sealed class WindowsOcrTextReader : IScreenTextReader
 
         if (_engine is null)
         {
-            UnavailableReason = Localizer.Loc("Ocr.NoLanguagePack");
+            // Name the language: "no language pack" with no noun is the message a Chinese user
+            // cannot act on. DisplayName follows the UI language, not the tag.
+            UnavailableReason = Localizer.Loc("Ocr.NoLanguagePack", DisplayNameFor(languageTag));
         }
     }
+
+    /// <summary>
+    /// The friendly, UI-localized name of a game-client language tag, or the tag itself when there
+    /// is no name for it.
+    /// </summary>
+    private static string DisplayNameFor(string? languageTag) => languageTag switch
+    {
+        "zh-Hans" => Localizer.Loc("Prefs.OcrLanguageChinese"),
+        "en-US" or null => Localizer.Loc("Prefs.OcrLanguageEnglish"),
+        _ => languageTag!,
+    };
+
+    private static OcrEngine? EngineFor(string languageTag)
+    {
+        try
+        {
+            return OcrEngine.TryCreateFromLanguage(new Language(languageTag));
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log.Warn($"OCR language '{languageTag}' rejected: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static OcrEngine? PreferredEngine() =>
+        // Prefer English: for an English client the extract names we match against are the English
+        // ones. Fall back to whatever the user has so a non-English install still gets a chance.
+        OcrEngine.TryCreateFromLanguage(new Language("en-US"))
+        ?? OcrEngine.TryCreateFromUserProfileLanguages();
 
     public bool IsAvailable => _engine is not null;
 

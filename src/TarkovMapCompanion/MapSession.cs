@@ -531,10 +531,39 @@ public sealed class MapSession : IDisposable
         ExitAvailabilityChanged?.Invoke(this, null);
     }
 
+    /// <summary>
+    /// Windows language tag for the configured OCR engine.
+    /// </summary>
+    /// <remarks>
+    /// The tag has to match the <em>game client's</em> language, not this app's UI language. An
+    /// English engine pointed at a Chinese panel does not degrade -- it produces confidently wrong
+    /// Latin and Cyrillic text, which reads as "no exits found" rather than as an error.
+    /// </remarks>
+    internal static string OcrLanguageTag(OcrLanguage language) => language switch
+    {
+        OcrLanguage.ChineseSimplified => "zh-Hans",
+        _ => "en-US",
+    };
+
     private IScreenTextReader? EnsureTextReader()
     {
         lock (_readerGate)
-            return _textReader ??= new WindowsOcrTextReader();
+            return _textReader ??= new WindowsOcrTextReader(OcrLanguageTag(_settings.OcrLanguage));
+    }
+
+    /// <summary>
+    /// Forgets the cached OCR reader so the next screenshot is read with the configured language.
+    /// </summary>
+    /// <remarks>
+    /// The reader is built once and reused, so without this a change to the OCR language would not
+    /// take effect until the app was restarted. Clearing it under the same gate
+    /// <see cref="EnsureTextReader"/> builds under means the next read constructs a fresh engine; a
+    /// read already in flight keeps its own reference and finishes on the old one.
+    /// </remarks>
+    internal void ApplyOcrLanguageSettings()
+    {
+        lock (_readerGate)
+            _textReader = null;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)

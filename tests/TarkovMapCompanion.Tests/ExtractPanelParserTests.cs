@@ -358,4 +358,253 @@ public sealed class ExtractPanelParserTests
 
         Assert.False(ExtractPanelParser.Parse(lines).PanelFound);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Captured Chinese-client output.
+    //
+    // These strings are verbatim from 3440x1440 frames of a 2026 Simplified-Chinese client, spaces
+    // between individual CJK characters and all. The Chinese id column is NOT "目的地" as the
+    // language-table prediction said: a transit really reads "转移点01".
+    // ---------------------------------------------------------------------------------------------
+
+    private static IReadOnlyList<OcrLine> ChineseCustomsPanel() =>
+    [
+        Line("找 到 撤 离 点", 2749, 27, 180, 24),
+        Line("撤 离 点 亿 1", 2692, 100, 120, 24),
+        Line("宿 舍 载 具 撤 离 点", 2840, 103, 240, 22),
+        Line("撤 离 点 2", 2692, 169, 110, 24),
+        Line("Z 日 一 121 弓", 2845, 175, 150, 22),
+        Line("撤 离 点 23", 2692, 239, 120, 24),
+        Line("十 字 路 口", 2845, 242, 140, 22),
+        Line("转 移 点", 2693, 520, 100, 24),
+        Line("前 往 储 备 站", 2840, 523, 160, 22),
+        Line("匠 亿 匠 57", 3287, 523, 100, 22),
+        Line("转 移 点 22", 2693, 596, 130, 24),
+        Line("前 往 工 厂", 2846, 599, 130, 22),
+        Line("匠 匠 57", 3287, 599, 100, 22),
+    ];
+
+    [Fact]
+    public void ReadsAChinesePanelHeaderWrittenWithSpacesBetweenCharacters()
+    {
+        // The trap the backlog predicted: Normalize keeps one space per punctuation/whitespace run,
+        // so a naive Contains("找到撤离点") can never match the reader's "找 到 撤 离 点".
+        var reading = ExtractPanelParser.Parse(ChineseCustomsPanel());
+
+        Assert.True(reading.PanelFound);
+        Assert.Single(reading.Rows, r => r.Kind == PanelRowKind.ListHeader);
+    }
+
+    [Fact]
+    public void AChineseHeaderAloneIsEnoughToProveThePanelIsOpen()
+    {
+        var reading = ExtractPanelParser.Parse([Line("找 到 撤 离 点", 2749, 27, 180, 24)]);
+
+        Assert.True(reading.PanelFound);
+    }
+
+    [Theory]
+    [InlineData("停 留 在 撤 离 点 内")]
+    [InlineData("回 到 撤 离 点 内")]
+    public void AChineseActiveBannerVetoesTheExitList(string header)
+    {
+        // The active banner's rows are numbered exactly like the list's, so only the wording can
+        // tell them apart. Treating it as the list dims every other exit at the worst moment.
+        var lines = new List<OcrLine>
+        {
+            Line(header, 1700, 30, 320, 24),
+            Line("撤 离 点 亿 1 院 子", 1812, 103, 300, 24),
+            Line("撤 离 点 亿 2 污 水 河", 1812, 172, 300, 24),
+        };
+
+        Assert.False(ExtractPanelParser.Parse(lines).PanelFound);
+    }
+
+    [Fact]
+    public void ReadsTheChineseRowsOfARealPanel()
+    {
+        var reading = ExtractPanelParser.Parse(ChineseCustomsPanel());
+
+        Assert.Equal(
+            ["宿舍载具撤离点", "Z日一121弓", "十字路口"],
+            reading.Rows.Where(r => r.Kind == PanelRowKind.Extract).Select(r => r.Name));
+
+        Assert.Equal(
+            ["前往储备站", "前往工厂"],
+            reading.Rows.Where(r => r.Kind == PanelRowKind.Transit).Select(r => r.Name));
+    }
+
+    [Theory]
+    // Every id form observed on the real frames: intact, zero read as 亿/@, two digits, one digit,
+    // merged id+name, and a transit with the digit dropped entirely.
+    [InlineData("撤 离 点 亿 1 地 下 室", "地下室")]
+    [InlineData("撤 离 点@2 监 控 地 堡 大 门", "监控地堡大门")]
+    [InlineData("撤 离 点 23 污 水 河", "污水河")]
+    [InlineData("撤 离 点 5 铁 路 通 道 （ 信 号 弹 ）", "铁路通道（信号弹）")]
+    [InlineData("转 移 点 前 往 实 验 室", "前往实验室")]
+    [InlineData("退 出 21 3 号 门", "3号门")]
+    [InlineData("撤 离 点 亿 1 宿 舍 载 具 撤 离 点", "宿舍载具撤离点")]
+    public void StripsTheChineseIdColumn(string raw, string expected)
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line(raw, 2692, 100, 400, 24),
+            Line("撤 离 点 亿 9 十 字 路 口", 2692, 170, 300, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == raw);
+
+        Assert.Contains(expected, row.NameCandidates);
+    }
+
+    [Fact]
+    public void ABareChineseIdLeavesAnEmptyNameRatherThanInventingOne()
+    {
+        // The id survived but the name did not. An empty row is honest; a name made of the id would
+        // be a guess the user cannot see through.
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line("撤 离 点", 2692, 100, 100, 24),
+            Line("撤 离 点 亿 9 十 字 路 口", 2692, 170, 300, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == "撤 离 点");
+
+        Assert.Equal("", row.Name);
+    }
+
+    [Theory]
+    // Captured under a tighter crop, where the id's digits are lost and only the name's own digit
+    // remains after the token. The greedy strip ate it ("撤离点 2号门" -> "号门"); the true name has
+    // to survive as one of the readings.
+    [InlineData("撤 离 点 2 号 门", "2号门")]
+    [InlineData("撤 离 点 3 号 门", "3号门")]
+    [InlineData("撤 离 点 0 号 门", "0号门")]
+    public void KeepsTheNamesLeadingDigitWhenTheIdCarriedNone(string raw, string expected)
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line(raw, 2692, 100, 400, 24),
+            Line("撤 离 点 亿 9 十 字 路 口", 2692, 170, 300, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == raw);
+
+        Assert.Contains(expected, row.NameCandidates);
+    }
+
+    [Theory]
+    [InlineData("转 移 点 前 往 储 备 站 匠 亿 匠 57", "前往储备站")]
+    [InlineData("转 移 点 22 前 往 工 厂 匠 匠 57", "前往工厂")]
+    [InlineData("转 移 点 21 前 往 森 林 匠@匠 57", "前往森林")]
+    [InlineData("转 移 点 前 往 海 岸 线 匠 34 ： 57", "前往海岸线")]
+    // The reader mixes real digits into the glyphs: captured "匠2匠54" as well as "匠亿匠57".
+    [InlineData("转 移 点 亿 1 前 往 森 林 匠 2 匠 54", "前往森林")]
+    [InlineData("转 移 点 前 往 储 备 站 匠 2 匠 54", "前往储备站")]
+    public void StripsTheCorruptedChineseCountdownWithoutEatingTheName(string raw, string expected)
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line(raw, 2692, 100, 500, 24),
+            Line("转 移 点 21 前 往 海 关 匠 匠 57", 2692, 170, 500, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == raw);
+
+        Assert.Contains(expected, row.NameCandidates);
+    }
+
+    [Theory]
+    // The generalised countdown class must not reach into a real name. "ZB-1013" is the one whose
+    // digits could be mistaken for a trailing timer if the run were allowed to start mid-name.
+    [InlineData("撤 离 点@2 3 号 门", "3号门")]
+    [InlineData("撤 离 点 亿 3 ZB-1013", "ZB-1013")]
+    [InlineData("转 移 点 前 往 实 验 室", "前往实验室")]
+    public void TheCountdownStripDoesNotEatARealName(string raw, string expected)
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line(raw, 2692, 100, 500, 24),
+            Line("撤 离 点 亿 9 十 字 路 口", 2692, 170, 300, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == raw);
+
+        Assert.Contains(expected, row.NameCandidates);
+    }
+
+    [Fact]
+    public void AChineseRequirementSubLineIsNotARow()
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line("转 移 点 21 前 往 森 林 匠@匠 57", 2693, 311, 500, 24),
+            Line("需 要 rraGro 卵 实 验 室 访 问 仞 匙 卡 (1)", 2700, 506, 500, 24),
+        };
+
+        var reading = ExtractPanelParser.Parse(lines);
+
+        Assert.True(reading.PanelFound);
+        Assert.DoesNotContain(reading.Rows, r => r.RawText.Contains("需 要", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    // Captured from a tighter crop, where the reader damages the token's first character but keeps
+    // the "移点" -- yet the row is still a transit.
+    [InlineData("车 专 移 点 1 前 往 储 备 站 匠 匠 57", "前往储备站")]
+    [InlineData("有 专 移 点 3 前 往 立 交 桥 匠 匠 57", "前往立交桥")]
+    [InlineData("： 转 2 前 往 立 交 桥 匠@匠 52", "前往立交桥")]
+    public void RecoversATransitWhoseIdTokenWasDamaged(string raw, string expected)
+    {
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line(raw, 2692, 100, 500, 24),
+            Line("转 移 点 21 前 往 海 关 匠 匠 57", 2692, 170, 500, 24),
+        };
+
+        var row = ExtractPanelParser.Parse(lines).Rows.Single(r => r.RawText == raw);
+
+        Assert.Equal(PanelRowKind.Transit, row.Kind);
+        Assert.Contains(expected, row.NameCandidates);
+    }
+
+    [Fact]
+    public void IgnoresChineseHudTextThatLooksLikeAnId()
+    {
+        // "弓 22 / 322" is hotbar noise. A fallback that was merely "some CJK then digits" matched
+        // it and made it the panel anchor, pulling every label to its left into the panel.
+        var lines = ChineseCustomsPanel().ToList();
+        lines.Add(Line("弓 22 / 322", 1723, 81, 130, 20));
+
+        var reading = ExtractPanelParser.Parse(lines);
+
+        Assert.True(reading.PanelFound);
+        Assert.DoesNotContain(reading.Rows, r => r.RawText.Contains("322", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DuplicateChineseTransitIdsDoNotBreakRowGrouping()
+    {
+        // An id is a per-section row marker, not a key: frame 1 contains both 转移点03 前往立交桥
+        // and 转移点03 前往海岸线. Both must survive.
+        var lines = new List<OcrLine>
+        {
+            Line("找 到 撤 离 点", 2749, 27, 180, 24),
+            Line("转 移 点 23 前 往 立 交 桥", 2693, 520, 400, 24),
+            Line("转 移 点 23 前 往 海 岸 线", 2693, 596, 400, 24),
+        };
+
+        var reading = ExtractPanelParser.Parse(lines);
+
+        Assert.Equal(
+            ["前往立交桥", "前往海岸线"],
+            reading.Rows.Where(r => r.Kind == PanelRowKind.Transit).Select(r => r.Name));
+    }
 }

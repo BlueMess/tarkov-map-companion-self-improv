@@ -21,7 +21,7 @@ public static class ReadExits
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: --read-exits <screenshot.png> [map] [whole]");
+            Console.Error.WriteLine("usage: --read-exits <screenshot.png> [map] [whole|panel] [ocrLang]");
             return 2;
         }
 
@@ -43,7 +43,7 @@ public static class ReadExits
             return 2;
         }
 
-        var reader = new WindowsOcrTextReader();
+        var reader = new WindowsOcrTextReader(OcrLanguage(args));
         Console.WriteLine($"reader     available={reader.IsAvailable} {reader.UnavailableReason}");
         if (!reader.IsAvailable)
             return 3;
@@ -51,6 +51,7 @@ public static class ReadExits
         Console.WriteLine($"file       {Path.GetFileName(path)}");
         Console.WriteLine($"map        {map.DisplayName}");
         Console.WriteLine($"region     {region}");
+        Console.WriteLine($"ocr lang   {OcrLanguage(args) ?? "(default)"}");
 
         var bytes = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
 
@@ -123,5 +124,25 @@ public static class ReadExits
             Console.WriteLine($"  UNRESOLVED: '{unresolved}'");
 
         return 0;
+    }
+
+    /// <summary>
+    /// Optional trailing <c>ocrLang</c> argument, e.g. <c>zh-Hans</c>.
+    /// </summary>
+    /// <remarks>
+    /// The engine language has to match the *game client's* language, and the tool needs to be able
+    /// to say both in one run -- a Chinese-client frame read with an English engine is the baseline
+    /// failure this whole feature is about, so being able to reproduce it on demand is worth the
+    /// argument.
+    /// </remarks>
+    private static string? OcrLanguage(string[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("ocr:", StringComparison.OrdinalIgnoreCase))
+                return arg["ocr:".Length..];
+        }
+
+        return null;
     }
 }

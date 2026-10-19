@@ -180,6 +180,15 @@ public partial class PreferencesWindow : Window
         };
         LanguageBox.SelectedIndex = _settings.Language == AppLanguage.ChineseSimplified ? 1 : 0;
 
+        // The OCR language is independent of the UI language, so it has its own control and its own
+        // key set. Labels stay in the active UI language; only the stored enum is what persists.
+        OcrLanguageBox.ItemsSource = new[]
+        {
+            Localization.Localizer.Loc("Prefs.OcrLanguageEnglish"),
+            Localization.Localizer.Loc("Prefs.OcrLanguageChinese"),
+        };
+        OcrLanguageBox.SelectedIndex = _settings.OcrLanguage == OcrLanguage.ChineseSimplified ? 1 : 0;
+
         FontSlider.Value = _settings.FontSize;
         UpdateFontLabel();
 
@@ -486,6 +495,23 @@ public partial class PreferencesWindow : Window
             _settings.Language = language;
             LanguageRestartText.Text = Localization.Localizer.Loc("prefs.language.restart");
             LanguageRestartText.IsVisible = true;
+        });
+
+        OcrLanguageBox.SelectionChanged += (_, _) => Apply(() =>
+        {
+            var language = OcrLanguageBox.SelectedIndex == 1
+                ? OcrLanguage.ChineseSimplified
+                : OcrLanguage.English;
+
+            if (language == _settings.OcrLanguage)
+                return;
+
+            _settings.OcrLanguage = language;
+
+            // Applied live, unlike the UI language: the session drops its cached OCR reader so the
+            // next screenshot is read with the new engine. A raid can be in progress while this
+            // changes, so there is no reason to make it wait for a restart.
+            _session?.ApplyOcrLanguageSettings();
         });
 
         FontSlider.PropertyChanged += (_, e) =>

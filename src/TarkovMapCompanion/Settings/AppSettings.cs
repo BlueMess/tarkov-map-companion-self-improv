@@ -20,6 +20,25 @@ public enum AppLanguage
 }
 
 /// <summary>
+/// Which language the game client draws in, so the OCR engine can be pointed at the right one.
+/// </summary>
+/// <remarks>
+/// Deliberately separate from <see cref="AppLanguage"/>: the two are genuinely independent, and a
+/// player may run an English UI with a Chinese game client, or the reverse. Tying the OCR engine to
+/// the UI language would break exactly the users this exists for. The panel is read off a
+/// screenshot, so an engine that does not match the client does not degrade -- it returns wrong
+/// text, which reads as "no exits found".
+/// </remarks>
+public enum OcrLanguage
+{
+    /// <summary>Match an English game client.</summary>
+    English,
+
+    /// <summary>Match a Simplified Chinese game client.</summary>
+    ChineseSimplified,
+}
+
+/// <summary>
 /// How (and whether) the app removes screenshots from the watched folder.
 /// Defaults to <see cref="Off"/>: this feature deletes the user's files, so it is opt-in.
 /// </summary>
@@ -486,6 +505,18 @@ public sealed class AppSettings
     /// </summary>
     public AppLanguage Language { get; set; } = AppLanguage.ChineseSimplified;
 
+    /// <summary>
+    /// The language the game client's extraction panel is in, so OCR reads the right text.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see cref="OcrLanguage.English"/>, unlike <see cref="Language"/>: English is the
+    /// historical case and the conservative default, so every existing settings file keeps today's
+    /// behaviour exactly. There is no migration to run -- a file written before this existed simply
+    /// uses the default. A settings file that names a language keeps it, and the two are applied
+    /// live: the cached OCR reader is dropped when this changes, so a raid in progress picks it up.
+    /// </remarks>
+    public OcrLanguage OcrLanguage { get; set; } = OcrLanguage.English;
+
     /// <summary>Base UI font size in device-independent pixels. 14 is the accessible floor we target.</summary>
     public double FontSize { get; set; } = 14.0;
 
@@ -634,6 +665,12 @@ public sealed class AppSettings
         // silently switching the UI to English.
         if (!Enum.IsDefined(Language))
             Language = AppLanguage.ChineseSimplified;
+
+        // Same guard for the OCR language, whose fallback is the opposite way round: English is the
+        // conservative default, so a bogus value keeps today's behaviour instead of pointing the
+        // engine at a language that may not exist on the machine.
+        if (!Enum.IsDefined(OcrLanguage))
+            OcrLanguage = OcrLanguage.English;
 
         if (string.IsNullOrWhiteSpace(CurrentMap))
             CurrentMap = "customs";

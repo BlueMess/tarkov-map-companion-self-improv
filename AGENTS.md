@@ -21,6 +21,24 @@ scripts\publish.ps1                             # single-file publish -> publish
 `global.json` pins 8.0.421 (`rollForward: latestFeature`); without it nothing builds. To diagnose
 without a window: `--render-test`, `--read-exits`, `--find-screenshots`, `--find-logs`.
 
+**Run those diagnostics through `dotnet run`, not `publish\TarkovMapCompanion.exe`.** The project is
+`OutputType=WinExe` (rightly — no console window when the user double-clicks it), and a GUI-subsystem
+process started with PowerShell's `&` operator is neither connected to a pipe nor waited for: you get
+no output *and* no `$LASTEXITCODE`. The app is fine — it writes to the standard handles correctly.
+Measured, all four ways, same 584.6 KB PNG:
+
+| Invocation | stdout | exit code |
+|---|---|---|
+| `dotnet run --project src\TarkovMapCompanion` (what CI and `Run.bat` use) | full | `0` |
+| `& publish\TarkovMapCompanion.exe` | **empty** | **unset** |
+| `Start-Process -Wait -PassThru` | full | `0` |
+| `Start-Process -RedirectStandardOutput` | full | — |
+
+So the published exe *is* scriptable — just not with `&`. Use `Start-Process -Wait -PassThru`, or
+verify the shipped build by running its managed dll: `dotnet publish\…` → the `TarkovMapCompanion.dll`
+under `bin\Release\net8.0-windows10.0.19041.0\win-x64\`, which is the same IL through a console host.
+CI is unaffected: it already uses `dotnet run`, and asserts both the exit code and the output file.
+
 **Re-run `scripts\publish.ps1` after every change that should be visible in the app.** `publish\` is
 gitignored, so it silently goes stale and the user keeps launching a binary from before the fix — a
 WebSync LAN-address fix was verified in the Debug build while the shipped `publish\` exe still had
@@ -45,15 +63,31 @@ CI runs on `windows-latest` and includes a real `--render-test` smoke test.
   wiki note keys) must be reached through the English accessor — comparing it against a display
   string only works while the UI happens to be in English. The remaining contract debt is in
   `docs/localization-ocr-chinese-backlog.md`.
-- **The Chinese OCR gap is a four-link chain, not a matching bug.** Assessed and phased in
-  `docs/localization-ocr-chinese-backlog.md` (C1–C5). Only the threshold step is still blocked, on
-  real Chinese-client screenshots. Two traps are written up there and are easy to re-invent:
-  fixing *only* the candidate set leaves the feature silently dead, because `ExitAvailability`
-  stores the matched **candidate string** while `Includes` looks up the **English** name — so
-  candidates have to become a surface→canonical map, and `dotnet test` can still pass. And the
-  2020 (0.12.2) screenshots in that doc are fine for string shapes but **must not** be used to
-  tune thresholds: the map data has moved on, so the unmatched rows are version drift wearing the
-  costume of a code bug.
+- **Chinese OCR now works end-to-end, and the traps that guard it are written up in
+  `docs/localization-ocr-chinese-backlog.md`.** Five real Chinese-client frames live in
+  `tests/screenshots/` with a README; they are **not** used by the automated tests (those feed the
+  parser captured OCR *text*, which is what it actually consumes and which fails loudly instead of
+  by image-diff). Run them with
+  `--read-exits "<png>" <map> "ocr:zh-Hans"`; expected counts are in the README. Four things there
+  are easy to re-invent the hard way:
+  - **`ExitAvailability` stores the English canonical, never the matched surface string.** `Includes`
+    looks up the English `Name`, so candidates have to be a surface→canonical map. Adding the
+    Chinese names to the existing flat `HashSet` looks like it works, lights nothing, and still
+    passes `dotnet test`.
+  - **`NameMatcher.Normalize` drops *all* spaces when the string contains a CJK ideograph.** The
+    `zh-Hans` engine emits a space between every Han character (`找 到 撤 离 点`), so without this
+    nothing in a Chinese panel ever matches. `Normalize` also rewrites **no glyphs** — the reader's
+    confusions (`弓`→`3`, and the `0`/`2`/`6`/`匠`/`亿`/`@` family) are corrected at scoring time in
+    `CorrectGlyphs`/`FoldConfusables`, because `Normalize` output is stored and a future snapshot
+    with 弓 in a name would be silently corrupted.
+  - **A wrong map argument and a broken matcher produce identical output.** The first draft of that
+    doc mislabelled 9 of 11 frames by guessing from landmarks. Resolve a name through
+    `translationsZh` to a key, then check which map has that key.
+  - **The tight crop is a stress harness, not a proposal.** Losslessly cropping a fixture to
+    `(0.76,0)–(1.0,0.60)` and running `--read-exits <crop> <map> whole ocr:zh-Hans` shifts the
+    effective OCR scale, which is how the greedy id-stripper, a countdown-regex gap and a damaged
+    transit token were all found. Adopting it at runtime was measured and rejected; keep using it
+    to test.
 - **Do not trust the vendored data.** `Data/Snapshots/` holds a json.tarkov.dev payload and a wiki
   scrape, and it has shipped real defects. `PoiBuilder` normalizes three (mis-assigned switch ids,
   coincident same-name extracts, code-named extracts), each pinned in `PoiTests.cs` /
@@ -70,7 +104,9 @@ CI runs on `windows-latest` and includes a real `--render-test` smoke test.
 Fork of `Battleroid/tarkov-map-companion`, pushed to `BlueMess/tarkov-map-companion-self-improv`.
 **All work lands on `master`; there are no feature branches left.** It has delivered WebSync, the
 vendored-data fixes, Simplified Chinese (`40613e8`), the preferences dialog rebuilt as a
-six-category rail, and Simplified Chinese as the client default. Build clean, tests green.
+six-category rail, Simplified Chinese as the client default, and **Chinese-client OCR end-to-end**
+(separate game-client language setting, CJK parsing, surface→canonical candidates, measured
+thresholds; 776 tests green). Build clean.
 
 The client defaults to Simplified Chinese, set in three places that must move together —
 `AppSettings.Language`, the `Normalize()` fallback for a hand-edited file, and the `Localizer`

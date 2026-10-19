@@ -102,4 +102,43 @@ public sealed class SettingsKeyTests
         Assert.True(overlay.Groups[SpawnGroup.AiPmc]);
         Assert.True(overlay.Groups[SpawnGroup.Scav]);
     }
+
+    [Fact]
+    public void OcrLanguage_DefaultsToEnglish()
+    {
+        // The conservative default, and the opposite choice from the UI language: English is the
+        // historical game client, so an existing settings file keeps exactly today's behaviour.
+        Assert.Equal(OcrLanguage.English, new AppSettings().OcrLanguage);
+    }
+
+    [Fact]
+    public void OcrLanguage_RoundTripsThroughSaveAndLoad()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "tmc-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+
+        try
+        {
+            var store = new SettingsStore(path);
+            store.Save(new AppSettings { OcrLanguage = OcrLanguage.ChineseSimplified });
+
+            Assert.Equal(OcrLanguage.ChineseSimplified, store.Load().OcrLanguage);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public void ABogusOcrLanguageInTheFile_FallsBackToEnglish()
+    {
+        // A hand-edited file can name a value the enum does not have. The guard has to swallow it
+        // rather than throw on load or leave the engine pointed at a language that does not exist.
+        var settings = new AppSettings { OcrLanguage = (OcrLanguage)99 };
+        settings.Normalize();
+
+        Assert.Equal(OcrLanguage.English, settings.OcrLanguage);
+    }
 }
