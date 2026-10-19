@@ -108,10 +108,22 @@ six-category rail, Simplified Chinese as the client default, and **Chinese-clien
 (separate game-client language setting, CJK parsing, surface→canonical candidates, measured
 thresholds; 776 tests green). Build clean.
 
-The client defaults to Simplified Chinese, set in three places that must move together —
+The UI language defaults to Simplified Chinese, set in three places that must move together —
 `AppSettings.Language`, the `Normalize()` fallback for a hand-edited file, and the `Localizer`
 static initializer. An existing `settings.json` that names a language keeps it, so only new installs
 move.
+
+`AppSettings.OcrLanguage` — the *game client's* language, not the UI's — now defaults to Simplified
+Chinese too, again in two places that must move together: the property initializer and its own
+`Normalize()` guard. It is still an independent setting (a Chinese client with an English UI is the
+case it exists for) and it is **applied live** — changing it drops the cached OCR reader, so a raid
+in progress picks it up — whereas the UI language needs a restart. The control lives on the
+**General / 常规** page under Appearance, not on Display; its `Name`s (`OcrLanguageLabel`,
+`OcrLanguageBox`, `OcrLanguageHint`) are load-bearing and moving a panel must not rename them.
+Because `SettingsStore.Save` writes the whole `AppSettings` (enums as names — `UseStringEnumConverter`,
+so a file reads `"ocrLanguage": "English"`, not `0`), an install that has run the app since the field
+shipped already names a language and keeps it, i.e. stays on English; only fresh installs and
+pre-feature files that never had the key move.
 
 WebSync is an embedded, read-only LAN mirror of the map, built as
 M1-M4 (skeleton + snapshot + token, basemap endpoints, WebSocket + client page, settings pane + QR)

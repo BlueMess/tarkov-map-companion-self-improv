@@ -509,13 +509,14 @@ public sealed class AppSettings
     /// The language the game client's extraction panel is in, so OCR reads the right text.
     /// </summary>
     /// <remarks>
-    /// Defaults to <see cref="OcrLanguage.English"/>, unlike <see cref="Language"/>: English is the
-    /// historical case and the conservative default, so every existing settings file keeps today's
-    /// behaviour exactly. There is no migration to run -- a file written before this existed simply
-    /// uses the default. A settings file that names a language keeps it, and the two are applied
-    /// live: the cached OCR reader is dropped when this changes, so a raid in progress picks it up.
+    /// Defaults to <see cref="OcrLanguage.ChineseSimplified"/> to agree with <see cref="Language"/>:
+    /// this app's UI already starts in Simplified Chinese, so the game client and the OCR engine
+    /// should match out of the box. Still an independent setting -- a Chinese client with an English
+    /// UI is exactly the case it exists for -- and it is applied live: the cached OCR reader is
+    /// dropped when this changes, so a raid in progress picks it up. There is no migration to run;
+    /// a settings file that names a language keeps it.
     /// </remarks>
-    public OcrLanguage OcrLanguage { get; set; } = OcrLanguage.English;
+    public OcrLanguage OcrLanguage { get; set; } = OcrLanguage.ChineseSimplified;
 
     /// <summary>Base UI font size in device-independent pixels. 14 is the accessible floor we target.</summary>
     public double FontSize { get; set; } = 14.0;
@@ -666,11 +667,11 @@ public sealed class AppSettings
         if (!Enum.IsDefined(Language))
             Language = AppLanguage.ChineseSimplified;
 
-        // Same guard for the OCR language, whose fallback is the opposite way round: English is the
-        // conservative default, so a bogus value keeps today's behaviour instead of pointing the
-        // engine at a language that may not exist on the machine.
+        // Same guard for the OCR language: Simplified Chinese is the default a new install gets, so
+        // an unreadable value falls back to that rather than pointing the engine at a language that
+        // may not exist on the machine.
         if (!Enum.IsDefined(OcrLanguage))
-            OcrLanguage = OcrLanguage.English;
+            OcrLanguage = OcrLanguage.ChineseSimplified;
 
         if (string.IsNullOrWhiteSpace(CurrentMap))
             CurrentMap = "customs";

@@ -104,11 +104,11 @@ public sealed class SettingsKeyTests
     }
 
     [Fact]
-    public void OcrLanguage_DefaultsToEnglish()
+    public void OcrLanguage_DefaultsToChineseSimplified()
     {
-        // The conservative default, and the opposite choice from the UI language: English is the
-        // historical game client, so an existing settings file keeps exactly today's behaviour.
-        Assert.Equal(OcrLanguage.English, new AppSettings().OcrLanguage);
+        // Agrees with the UI language default: this app already starts in Simplified Chinese, so a
+        // fresh install should point the OCR engine at the same language the client is likely in.
+        Assert.Equal(OcrLanguage.ChineseSimplified, new AppSettings().OcrLanguage);
     }
 
     [Fact]
@@ -132,13 +132,13 @@ public sealed class SettingsKeyTests
     }
 
     [Fact]
-    public void ABogusOcrLanguageInTheFile_FallsBackToEnglish()
+    public void ABogusOcrLanguageInTheFile_FallsBackToChineseSimplified()
     {
         // A hand-edited file can name a value the enum does not have. The guard has to swallow it
         // rather than throw on load or leave the engine pointed at a language that does not exist.
         var settings = new AppSettings { OcrLanguage = (OcrLanguage)99 };
         settings.Normalize();
 
-        Assert.Equal(OcrLanguage.English, settings.OcrLanguage);
+        Assert.Equal(OcrLanguage.ChineseSimplified, settings.OcrLanguage);
     }
 }
