@@ -45,6 +45,25 @@ WebSync LAN-address fix was verified in the Debug build while the shipped `publi
 the old behaviour. The user runs the published exe for hands-on testing, so a green `dotnet test`
 does not mean what they are running is current.
 
+## Releasing
+
+A release is a `v*` tag; `.github/workflows/release.yml` builds it and creates the GitHub release.
+
+```
+git tag -a v0.13.1 -m "..."     # on the commit you want to ship
+git push origin v0.13.1        # -> Release workflow -> GitHub release with the exe
+```
+
+- The workflow stamps the version from the tag, so a binary built without it reports the csproj
+  version (0.12.2) in the About window and the crash log.
+- It takes a `tag` input, so `workflow_dispatch` can release a tag that is already pushed — no need
+  to delete and re-push it.
+- The repo's default `GITHUB_TOKEN` permission is read-only, but `release.yml` declares
+  `permissions: contents: write` for itself, which is what lets it create the release.
+- `scripts\release.ps1 -Version v0.13.1 [-Publish]` does the same thing from this machine (tests,
+  publish, then `gh release create`). It needs the GitHub CLI, which is not installed here.
+- **A tag push does nothing at all if Actions are off for this repo.** See the trap below.
+
 ## Stack
 
 .NET 8 · Avalonia 11 · SkiaSharp · Svg.Skia. Windows-only (uses the built-in Windows OCR).
@@ -108,6 +127,10 @@ six-category rail, Simplified Chinese as the client default, and **Chinese-clien
 (separate game-client language setting, CJK parsing, surface→canonical candidates, measured
 thresholds; 776 tests green). Build clean.
 
+The fork's first release is **v0.13.0** (2026-10-19, `7f14ad8`), published by GitHub Actions.
+Actions are enabled for this repo now — see the trap below, because that was not true when the
+first tag was pushed.
+
 The UI language defaults to Simplified Chinese, set in three places that must move together —
 `AppSettings.Language`, the `Normalize()` fallback for a hand-edited file, and the `Localizer`
 static initializer. An existing `settings.json` that names a language keeps it, so only new installs
@@ -160,6 +183,22 @@ JSON, and do not assume a missing directory means the data was lost.
 
 ### Traps this branch paid for (do not rediscover them)
 
+- **A tag push to a fork whose upstream already had workflow files does nothing, silently.** This
+  repo is a fork, and GitHub starts forks with Actions *disabled* when the source repo shipped
+  `.github/workflows`. Nothing signals it: the API lists both workflows as `active`, and
+  Settings → Actions → General already says "Allow all actions". The only visible sign is a banner
+  on the Actions tab — "Workflows aren't being run on this forked repository" — and
+  `GET /repos/{owner}/{repo}/actions/runs` returning **0 runs** after pushes that should have run
+  CI. A `v*` tag pushed in that state creates no workflow, no release, and no error anywhere; the
+  tag just sits there. Fixed on 2026-10-19 by clicking "I understand my workflows, go ahead and
+  enable them" on the Actions tab (it is *not* in the settings pages), after which the tag push
+  worked. **Check the run count before believing a release happened.**
+- **The GitHub API's anonymous rate limit is 60 requests an hour, and a polling watcher burns it
+  in minutes.** A release wait loop that polls `/actions/runs` every 45 s gets 403'd and then reads
+  "no run yet" for the rest of its life, which looks exactly like a broken workflow. Poll the
+  releases page, or HEAD the asset URL
+  (`…/releases/download/v0.13.0/TarkovMapCompanion-v0.13.0-win-x64.exe`, which redirects to
+  `release-assets.githubusercontent.com` and answers with the real `Content-Length`).
 - **The client page had no cache headers and nobody noticed for several rounds.** `GET /` serves an
   embedded resource whose URL never changes, so browsers heuristically cached the HTML and every
   fix appeared to do nothing on the phone while local testing looked green. It now sends
