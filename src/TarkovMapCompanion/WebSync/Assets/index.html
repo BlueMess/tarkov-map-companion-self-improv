@@ -297,7 +297,7 @@
     if(S.follow && Date.now()>pauseUntil){
       var want=pl.floor||"";
       var cur=S.active.size===1?S.active.values().next().value:"";
-      if(want!==cur){ S.active=want?new Set([want]):new Set(); buildFloors(); buildArt(); }
+      if(want!==cur){ S.active=want?new Set([want]):new Set(); buildFloors(); buildArt(); requestRender(); }
     }
   }
 
@@ -315,6 +315,14 @@
     if(shown===1) return "楼层 · "+floorLabel(S.active.values().next().value);
     return "楼层 · "+shown;
   }
+  // Mirrors PoiOverlay.OnActiveFloor. A POI that carries a floor name is drawn only while that
+  // floor is ticked; a season document spawn with none is ground level, so it rides the ground
+  // toggle. Everything else has no floor in its source and is never filtered -- reading a missing
+  // floor as "ground" there would hide every exit the moment the ground layer is switched off.
+  function poiOnActiveFloor(p){
+    if(p.kind==="SeasonDocuments") return p.floor?S.active.has(p.floor):S.base;
+    return !p.floor || S.active.has(p.floor);
+  }
   function buildFloors(){
     var fl=(S.snap&&S.snap.map&&S.snap.map.floors)||[];
     floorsEl.innerHTML="";
@@ -329,7 +337,7 @@
     ground.type="button"; ground.className="frow ground"+(S.base?" on":"");
     ground.setAttribute("role","checkbox"); ground.setAttribute("aria-checked",S.base?"true":"false");
     ground.innerHTML='<span class="ck"></span><span class="lb">地面层<small>地形底图</small></span>';
-    ground.addEventListener("click",function(){ S.base=!S.base; buildFloors(); buildArt(); });
+    ground.addEventListener("click",function(){ S.base=!S.base; buildFloors(); buildArt(); requestRender(); });
     body.appendChild(ground);
 
     // Floors combine, like the desktop's checkbox list rather than the old single-choice pills.
@@ -344,7 +352,7 @@
       b.addEventListener("click",function(){
         pauseUntil=Date.now()+30000;            // manual tap pauses auto-follow for 30s
         if(S.active.has(f.name)) S.active.delete(f.name); else S.active.add(f.name);
-        buildFloors(); buildArt();
+        buildFloors(); buildArt(); requestRender();
       });
       body.appendChild(b);
     });
@@ -843,6 +851,7 @@
         p=pois[i];
         var isEx=EXTRACT_KINDS[p.kind]===1;
         if((pass===1)!==isEx) continue;             // pass 0: everything but exits; pass 1: exits
+        if(!poiOnActiveFloor(p)) continue;          // a floor that is switched off
         var b=gameToBase(p.x,p.z,S.proj);
         if(br && (b.x<br.x || b.y<br.y || b.x>br.x+br.w || b.y>br.y+br.h)) continue;   // off the map
         var x=view.tx+b.x*view.scale, y=view.ty+b.y*view.scale;
@@ -852,6 +861,23 @@
         var muted=isEx && p.available===false;      // only exits fade; an unknown raid stays solid
         var fill=muted?withAlpha(col,MUTED_ALPHA):col;
         var edge=muted?POI_MUTED_OUTLINE:POI_OUTLINE;
+
+        // A season document spawn nobody has confirmed: the desktop draws it hollow with a dashed
+        // halo, so the phone must not show it as a plain dot -- that is what made six real spawns
+        // look like they were missing.
+        if(p.kind==="SeasonDocuments" && p.unverified){
+          scoped(function(){
+            ctx.beginPath(); ctx.arc(x,y,r,0,TAU);
+            ctx.fillStyle="rgba(0,0,0,.35)"; ctx.fill();
+            ctx.lineWidth=Math.max(1.6,r*0.42); ctx.strokeStyle="rgba(0,0,0,.75)"; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x,y,r,0,TAU);
+            ctx.lineWidth=Math.max(1.2,r*0.24); ctx.strokeStyle=col; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x,y,r+RING_GAP,0,TAU);
+            ctx.lineWidth=RING_W; ctx.strokeStyle=withAlpha(col,0.82);
+            ctx.setLineDash([3,2.5]); ctx.stroke();
+          });
+          continue;
+        }
 
         // One marker -- dot/diamond, conditional ring and name -- in a single save()/restore scope,
         // so a later edit to any one of them cannot leak state into the rest (dot/diamond are already

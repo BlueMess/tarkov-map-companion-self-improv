@@ -143,6 +143,16 @@ public static class RenderTest
             var overlay = new PoiOverlay { Map = map };
             overlay.SetPois(pois);
 
+            // The season-document layer is bound to the floor toggles, so by default the image would
+            // show only the ground layer and the per-kind counts below would stop matching what is
+            // drawn -- the one thing this harness exists to catch. So: no floor argument means every
+            // floor is open; an explicit floor list is honoured, which is what makes it possible to
+            // check one floor's markers against that floor's artwork alone.
+            overlay.ActiveFloors = flags.Contains("baseonly") || floors.Length == 0
+                ? (flags.Contains("baseonly") ? Array.Empty<string>() : map.Floors.Select(f => f.Name).ToArray())
+                : floors;
+            overlay.ShowBaseLayer = includeBase;
+
             // Everything except the dense loot layer, which would bury the map.
             foreach (var kind in Enum.GetValues<PoiKind>())
                 overlay.Visible[kind] = kind != PoiKind.LootContainer;

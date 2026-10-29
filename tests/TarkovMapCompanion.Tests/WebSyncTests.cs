@@ -634,6 +634,50 @@ public sealed class WebSyncTests
     }
 
     /// <summary>
+    /// A season document spawn carries the two extra fields the phone's marker style needs: the
+    /// floor it belongs to, and whether nobody has confirmed it. Without them the mirror drew every
+    /// spawn as the same solid dot, which made unconfirmed ones look like missing points.
+    /// </summary>
+    [Fact]
+    public void SeasonDocumentPoisCarryTheirFloorAndUnverifiedFlag()
+    {
+        var map = Catalog.Find("customs")!;
+        var game = new GamePosition(100, 0, 200);
+        var basePoint = map.ToBase(game);
+
+        var pois = new PoiOverlay { Map = map };
+        pois.Visible[PoiKind.SeasonDocuments] = true;
+        pois.SetPois(
+        [
+            new MapPoi
+            {
+                Kind = PoiKind.SeasonDocuments,
+                Name = "Confirmed",
+                Position = game,
+                Base = basePoint,
+                FloorName = "2nd Floor",
+            },
+            new MapPoi
+            {
+                Kind = PoiKind.SeasonDocuments,
+                Name = "Unconfirmed",
+                Position = game,
+                Base = basePoint,
+                FloorName = null,
+                IsUnverified = true,
+            },
+        ]);
+
+        var built = SnapshotBuilder.BuildPois(pois);
+
+        Assert.Equal(2, built.Count);
+        Assert.Equal("2nd Floor", built[0].Floor);
+        Assert.False(built[0].Unverified);
+        Assert.Null(built[1].Floor);
+        Assert.True(built[1].Unverified);
+    }
+
+    /// <summary>
     /// A layer switched off is not drawn on the desktop, so it must not reach the mirror.
     /// </summary>
     [Fact]

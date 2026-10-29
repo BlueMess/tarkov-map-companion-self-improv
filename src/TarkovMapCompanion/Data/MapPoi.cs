@@ -94,6 +94,17 @@ public sealed class MapPoi
     public (double Bottom, double Top)? Elevation { get; init; }
 
     /// <summary>
+    /// The map floor this POI sits on, as a <c>MapFloor.Name</c>; null is the ground layer.
+    /// </summary>
+    /// <remarks>
+    /// Only set for POIs whose source declares a floor, which today is <see cref="PoiKind.SeasonDocuments"/>
+    /// alone -- exits, loot and spawns carry no floor upstream, so a null here must not be read as
+    /// "ground floor" for them or they would all vanish when the ground layer is switched off.
+    /// <see cref="Rendering.PoiOverlay"/> filters by this; nothing else does.
+    /// </remarks>
+    public string? FloorName { get; init; }
+
+    /// <summary>
     /// Requirement lines for the detail panel, e.g. "Activated by: power switch".
     /// Empty when the POI has no conditions attached.
     /// </summary>

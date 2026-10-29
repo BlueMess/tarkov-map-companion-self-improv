@@ -252,6 +252,23 @@ public sealed class MapSession : IDisposable
         PoisChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Hands the window's floor selection to everything that filters by level.
+    /// </summary>
+    /// <remarks>
+    /// The canvas owns this state (its <c>ActiveFloors</c>/<c>ShowBaseLayer</c> are what the floor
+    /// checkboxes write to) and there is no event to subscribe to, so it is pushed in after every
+    /// change and again on every map load, which resets the canvas's own copy. Both overlays take
+    /// the same values the artwork is drawn with, so a marker can never sit on a level that is not
+    /// on screen.
+    /// </remarks>
+    internal void ApplyFloorState(IReadOnlyCollection<string> activeFloors, bool showBaseLayer)
+    {
+        Player.ActiveFloors = activeFloors;
+        Pois.ActiveFloors = activeFloors;
+        Pois.ShowBaseLayer = showBaseLayer;
+    }
+
     public ExtractLineOverlay ExtractLine { get; }
 
     /// <summary>The ordered route the player has drawn, if any.</summary>

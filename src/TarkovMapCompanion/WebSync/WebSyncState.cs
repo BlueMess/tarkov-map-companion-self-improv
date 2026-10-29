@@ -361,11 +361,30 @@ internal sealed record WebSyncPoi
     /// <summary>True when using this requires a payment, item, switch, flare, partner or timing.</summary>
     public bool Conditional { get; init; }
 
+    /// <summary>
+    /// True when the source has not confirmed this point (a season document spawn nobody has
+    /// checked). The phone draws the same hollow dashed marker the desktop does; false everywhere
+    /// else, so it never changes how an exit or a loot marker looks.
+    /// </summary>
+    public bool Unverified { get; init; }
+
     /// <summary>True when this is usable once per raid.</summary>
     public bool SingleUse { get; init; }
 
     /// <summary>Height band as <c>[bottom, top]</c>, or null when the source gives none.</summary>
     public List<double>? Elevation { get; init; }
+
+    /// <summary>
+    /// The map floor this POI sits on, as a floor name matching <see cref="WebSyncMap.Floors"/>, or
+    /// null for the ground layer.
+    /// </summary>
+    /// <remarks>
+    /// Only layers whose source declares a floor set this -- today the season document spawns.
+    /// Absent/null on everything else, and the client must not read that as "ground floor": it
+    /// would hide every exit as soon as the ground layer is switched off. The client filters by its
+    /// own floor selection with this name.
+    /// </remarks>
+    public string? Floor { get; init; }
 }
 
 /// <summary>One tracked quest objective mark on the current map, in game coordinates.</summary>

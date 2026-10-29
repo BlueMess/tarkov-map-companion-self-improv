@@ -8,17 +8,37 @@ namespace TarkovMapCompanion.Data;
 /// One season-1 "KORD BREACH" TerraGroup document spawn point.
 /// </summary>
 /// <remarks>
-/// The source is Chinese-only, so <see cref="NameZh"/> doubles as the English name at the display
-/// site. Coordinates are game world (x, z); height is not supplied.
+/// Coordinates are game world (x, z); height is not supplied. The source site's own text is English
+/// (<see cref="NameEn"/>); <see cref="NameZh"/> is the composed Chinese label the layer displays.
 /// </remarks>
 public sealed class SeasonDocumentPoint
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";
     [JsonPropertyName("map")] public string Map { get; set; } = "";
     [JsonPropertyName("nameZh")] public string? NameZh { get; set; }
+
+    /// <summary>
+    /// The spawn's English title from the source, e.g. <c>Warehouse 5 Shelves</c>. Null in a v1
+    /// snapshot, which predates the field; the Chinese name is then the only one there is.
+    /// </summary>
+    [JsonPropertyName("nameEn")] public string? NameEn { get; set; }
+
     [JsonPropertyName("typeZh")] public string? TypeZh { get; set; }
     [JsonPropertyName("titleZh")] public string? TitleZh { get; set; }
     [JsonPropertyName("floor")] public string? Floor { get; set; }
+
+    /// <summary>
+    /// The floor layer this spawn belongs to, as a <c>MapFloor.Name</c>, or null for the ground
+    /// floor.
+    /// </summary>
+    /// <remarks>
+    /// Schema v2 field. A v1 snapshot has no <c>floorKey</c> and deserializes to null here, which
+    /// is the same meaning as an explicit null: ground floor. The value is used as a layer key, not
+    /// displayed -- <see cref="Floor"/> is the human-readable one -- so it must be compared, never
+    /// shown.
+    /// </remarks>
+    [JsonPropertyName("floorKey")] public string? FloorKey { get; set; }
+
     [JsonPropertyName("keyRequiredZh")] public string? KeyRequiredZh { get; set; }
 
     /// <summary>False when nobody has confirmed the spawn in game; drives the "?" styling.</summary>
@@ -31,6 +51,10 @@ public sealed class SeasonDocumentPoint
 /// <summary>Whole snapshot of season document spawns; embedded read-only data.</summary>
 public sealed class SeasonDocumentsDocument
 {
+    /// <summary>
+    /// Snapshot schema. 1 is the pre-floor shape, where every point is implicitly ground level;
+    /// 2 adds <see cref="SeasonDocumentPoint.FloorKey"/>. Absent means 1.
+    /// </summary>
     [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; }
     [JsonPropertyName("source")] public string? Source { get; set; }
     [JsonPropertyName("generatedAt")] public string? GeneratedAt { get; set; }
@@ -61,6 +85,18 @@ public sealed class SeasonDocumentStore
     private static int _missingResourceLogged;
 
     private readonly Dictionary<string, List<SeasonDocumentPoint>> _byMap = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Schema of the snapshot that was loaded: 1 for the pre-floor shape where every point is
+    /// implicitly ground level, 2 once points carry <see cref="SeasonDocumentPoint.FloorKey"/>.
+    /// 0 when nothing loaded.
+    /// </summary>
+    /// <remarks>
+    /// Nothing branches on this -- both shapes mean the same thing to the reader, because a v1
+    /// point simply has no floor key -- so it exists to make a stale snapshot diagnosable rather
+    /// than to drive behaviour.
+    /// </remarks>
+    public int SchemaVersion { get; private set; }
 
     public SeasonDocumentStore() => Load();
 
@@ -95,6 +131,8 @@ public sealed class SeasonDocumentStore
     {
         if (document is null)
             return;
+
+        SchemaVersion = document.SchemaVersion;
 
         foreach (var point in document.Points)
         {

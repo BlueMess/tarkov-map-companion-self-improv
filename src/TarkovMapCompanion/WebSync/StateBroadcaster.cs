@@ -303,6 +303,12 @@ internal static class SnapshotBuilder
                 Elevation = poi.Elevation is { } band
                     ? new List<double> { band.Bottom, band.Top }
                     : null,
+
+                // Null for every layer but the season documents; see WebSyncPoi.Floor.
+                Floor = poi.FloorName,
+
+                // Drives the phone's hollow-ring style for an unconfirmed season spawn.
+                Unverified = poi.IsUnverified,
             });
         }
 

@@ -54,15 +54,6 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
         Color = MarkerPalette.LabelText,
     };
 
-    /// <summary>The "?" centered in an unconfirmed season document marker.</summary>
-    private static readonly SKPaint UnverifiedMark = new()
-    {
-        IsAntialias = true,
-        Typeface = LabelTypeface,
-        TextSize = 8,
-        Color = MarkerPalette.LabelText,
-    };
-
     /// <summary>A hairline back to the marker, for a name that had to move to be readable.</summary>
     private static readonly SKPaint Leader = new()
     {
@@ -92,6 +83,15 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
 
     /// <summary>Which layers are drawn. Missing entries are treated as hidden.</summary>
     public IDictionary<PoiKind, bool> Visible { get; } = new Dictionary<PoiKind, bool>();
+
+    /// <summary>Floors the user has switched on, by <c>MapFloor.Name</c>.</summary>
+    public IReadOnlyCollection<string> ActiveFloors { get; set; } = [];
+
+    /// <summary>
+    /// Whether the ground level is drawn. Only matters to markers that declare a floor; see
+    /// <see cref="OnActiveFloor"/>.
+    /// </summary>
+    public bool ShowBaseLayer { get; set; } = true;
 
     /// <summary>Currently selected extract or transit, drawn with its outline and a label.</summary>
     public MapPoi? Selected { get; set; }
@@ -134,6 +134,24 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
 
     public bool IsKindVisible(PoiKind kind) => Visible.TryGetValue(kind, out var on) && on;
 
+    /// <summary>
+    /// Whether this POI belongs to a level the user is currently showing.
+    /// </summary>
+    /// <remarks>
+    /// Only sources that declare a floor are filtered. A season document spawn on "2nd Floor" is
+    /// drawn while that floor is switched on, and one with no floor is ground level, which is the
+    /// base layer's own toggle. Exits, loot, spawns and the rest have no floor upstream, so a null
+    /// there must not be read as "ground": tying them to <see cref="ShowBaseLayer"/> would empty
+    /// the map the moment an underground level is selected.
+    /// </remarks>
+    private bool OnActiveFloor(MapPoi poi)
+    {
+        if (poi.FloorName is { } floor)
+            return ActiveFloors.Contains(floor);
+
+        return poi.Kind != PoiKind.SeasonDocuments || ShowBaseLayer;
+    }
+
     /// <summary>All extracts and transits, for the picker list.</summary>
     public IEnumerable<MapPoi> Extracts =>
         _pois.Where(p => p.IsExtract || p.Kind == PoiKind.Transit);
@@ -149,7 +167,9 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
 
         foreach (var poi in _pois)
         {
-            if (!IsKindVisible(poi.Kind))
+            // A marker on a floor that is switched off must not be pickable either, or the map
+            // answers a click that has nothing under it.
+            if (!IsKindVisible(poi.Kind) || !OnActiveFloor(poi))
                 continue;
 
             var screen = viewport.ToScreen(poi.Base);
@@ -234,6 +254,12 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
         if ((!force && !IsKindVisible(poi.Kind)) || !visible.Contains(poi.Base))
             return;
 
+        // `force` is the selected exit, which is drawn whatever the filters say rather than
+        // leaving a guide line pointing at nothing; the same reasoning covers a floor that has
+        // been switched off under it.
+        if (!force && !OnActiveFloor(poi))
+            return;
+
         var screen = viewport.ToScreen(poi.Base);
         var x = (float)screen.X;
         var y = (float)screen.Y;
@@ -305,9 +331,10 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
     }
 
     /// <summary>
-    /// A season document spawn: an amber dot once confirmed, a smaller gray dot with a "?" while
-    /// nobody has checked it. Unconfirmed points never disappear -- they only recede -- so an
-    /// unchecked lead is still findable on the map.
+    /// A season document spawn: a solid amber dot once confirmed, and the same dot with an amber
+    /// outline plus a dashed halo while nobody has checked it. The unverified form keeps the amber
+    /// identity -- it is the same kind of marker, not a lesser one -- and the dash ring is what says
+    /// "not confirmed", so a lead can no longer be mistaken for a marker that is simply missing.
     /// </summary>
     private static void DrawSeasonDocument(
         SKCanvas canvas,
@@ -319,22 +346,56 @@ public sealed class PoiOverlay : IMapOverlay, ILabeledOverlay
         SKPaint stroke)
     {
         var unverified = poi.IsUnverified;
-        var radius = unverified ? MarkerRadius - 1.5f : MarkerRadius;
+        var radius = MarkerRadius;
 
         if (highlighted)
             radius += 2.5f;
 
-        fill.Color = unverified ? MarkerPalette.SeasonDocDim : MarkerPalette.SeasonDoc;
-        stroke.Color = unverified ? MutedOutline : Outline;
-
-        canvas.DrawCircle(x, y, radius, fill);
-        canvas.DrawCircle(x, y, radius, stroke);
-
         if (unverified)
         {
-            var width = UnverifiedMark.MeasureText("?");
-            canvas.DrawText("?", x - width / 2f, y + 3f, UnverifiedMark);
+            // Hollow with a dark backing, not a tinted one: an amber wash over pale floor tile
+            // sampled as a muddy olive, which read as dirt inside the ring rather than as a hole.
+            // The dark rim under the amber stroke is what keeps the ring legible on light artwork.
+            fill.Color = new SKColor(0, 0, 0, 0x59);
+            canvas.DrawCircle(x, y, radius, fill);
+
+            using var backing = new SKPaint
+            {
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 3.4f,
+                Color = Outline,
+            };
+            canvas.DrawCircle(x, y, radius, backing);
+
+            using var edge = new SKPaint
+            {
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.8f,
+                Color = MarkerPalette.SeasonDoc,
+            };
+            canvas.DrawCircle(x, y, radius, edge);
+
+            using var halo = new SKPaint
+            {
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.6f,
+                Color = MarkerPalette.SeasonDoc.WithAlpha(0xD0),
+                PathEffect = SKPathEffect.CreateDash([3f, 2.5f], 0),
+            };
+            canvas.DrawCircle(x, y, radius + 4f, halo);
+
+            // No "?" glyph: at this size it is illegible and reads as a thick blot inside the ring.
+            // The dashed halo is the "not confirmed" signal, and it survives at every zoom.
+            return;
         }
+
+        fill.Color = MarkerPalette.SeasonDoc;
+        stroke.Color = Outline;
+        canvas.DrawCircle(x, y, radius, fill);
+        canvas.DrawCircle(x, y, radius, stroke);
     }
 
     private void DrawSelection(SKCanvas canvas, Viewport viewport, MapPoi selected)

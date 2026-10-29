@@ -188,10 +188,11 @@ floating over the bottom-left of the map, alongside **Levels** — what is drawn
 about the map, so that is where the switches are.
 
 **Season documents.** Where the current season's TerraGroup files can spawn, as one toggleable
-layer. An amber dot has been confirmed in game; a dimmed dot with a question mark is a community
-report nobody has verified yet — a place worth looking at, not a promise. They are *possible* spawn
-points: each document type puts out only a handful per raid and one of them is yours, so the layer is
-a shorter list to work from, not a route.
+layer. A solid amber dot has been confirmed in game; a hollow amber ring with a dashed halo is a
+community report nobody has verified yet — a place worth looking at, not a promise. Each spawn is
+bound to its floor: one on the second floor is drawn only while that floor is switched on, one on the
+ground only while 地面 is on. They are *possible* spawn points: each document type puts out only a
+handful per raid and one of them is yours, so the layer is a shorter list to work from, not a route.
 
 **Screenshot cleanup.** Optional and **off by default**. When enabled it keeps only the newest N
 screenshots, or removes each one after reading it. Deleted files go to the Recycle Bin, never
@@ -463,7 +464,7 @@ Needs the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 ```
 git clone https://github.com/BlueMess/tarkov-map-companion-self-improv
 cd tarkov-map-companion-self-improv
-dotnet test              # 718 tests
+dotnet test              # the whole suite, no external services needed
 Run.bat                  # or: dotnet run --project src/TarkovMapCompanion
 ```
 
@@ -522,12 +523,14 @@ Chinese for exit *conditions* is not in that data — the wiki has no official t
 comes from the bundled `Data/Snapshots/extract-notes.zh.json`, which sits beside the English file
 and decorates it for display without ever replacing it.
 
-Season document spawns come from [TarkovDoc](https://tarkovdoc.com)'s KORD BREACH pages, gathered on
-2026-10-15 into `Data/Snapshots/season-documents.json`: 334 possible spawn points over 11 maps.
-Nothing upstream publishes these, so the positions were fitted against this project's own map
-artwork and are approximate, and the 13 points nobody has confirmed in game are drawn dimmed with a
-question mark. Unlike the exit notes there is no override file — a new season means a new bundled
-snapshot.
+Season document spawns come from [TarkovDoc](https://tarkovdoc.com)'s KORD BREACH pages, refreshed
+2026-10-27 into `Data/Snapshots/season-documents.json`: 242 spawn points over 11 maps. The site draws
+upper floors and building interiors as separate plans in the margin of a poster, so a point sitting on
+one of those panels has no coordinate that carries over — those are dropped rather than guessed at,
+and the two maps whose upper floors were worth keeping (The Lab, Interchange) are calibrated against
+this project's own basemap by hand. What remains is placed on the floor it belongs to, and the points
+nobody has confirmed in game are drawn hollow with a dashed halo. Unlike the exit notes there is no
+override file — a new season means a new bundled snapshot.
 
 That upstream payload has shipped defects that make the list unreadable, so three of them are
 corrected when the list is built:

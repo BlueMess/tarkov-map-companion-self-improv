@@ -95,6 +95,53 @@ public sealed class SeasonDocumentTests : IDisposable
         return store;
     }
 
+    /// <summary>
+    /// Schema v2 snapshot: the same points plus <c>floorKey</c>, which is the floor layer's name
+    /// and null for the ground layer. Carries the other v2 metadata too, so an unknown field
+    /// cannot silently be assumed inert.
+    /// </summary>
+    private const string FixtureV2 = """
+    {
+      "schemaVersion": 2,
+      "source": "test fixture",
+      "generatedAt": "2026-10-24T00:00:00.000Z",
+      "points": [
+        {
+          "id": "doc_customs_upstairs",
+          "map": "customs",
+          "nameZh": "财务文件·二楼办公室",
+          "nameEn": "Financial document, upstairs office",
+          "slug": "financial-document-upstairs-office",
+          "type": "financial",
+          "origin": "KORD BREACH",
+          "floor": "2F",
+          "floorZh": "二楼",
+          "floorKey": "2nd Floor",
+          "keyRequiredZh": null,
+          "confirmed": true,
+          "x": 478.13,
+          "z": -88.2
+        },
+        {
+          "id": "doc_customs_ground",
+          "map": "customs",
+          "nameZh": "财务文件·地面帐篷",
+          "nameEn": "Financial document, ground tent",
+          "slug": "financial-document-ground-tent",
+          "type": "financial",
+          "origin": "KORD BREACH",
+          "floor": null,
+          "floorZh": null,
+          "floorKey": null,
+          "keyRequiredZh": null,
+          "confirmed": true,
+          "x": 100.5,
+          "z": -20.0
+        }
+      ]
+    }
+    """;
+
     [Fact]
     public void StoreParsesTheSchemaAndBucketsPointsByMap()
     {
@@ -135,6 +182,66 @@ public sealed class SeasonDocumentTests : IDisposable
 
         Assert.Empty(store.FindFor("does-not-exist"));
         Assert.Equal(0, store.CountFor("does-not-exist"));
+    }
+
+    [Fact]
+    public void SchemaV1PointsAreAllGroundLevelBecauseTheyHaveNoFloorKey()
+    {
+        var store = SeasonDocumentStore.FromJson(Fixture);
+        Assert.Equal(1, store.SchemaVersion);
+
+        // The v1 file has a human-readable "1F"/"2F" in `floor` and no layer name at all. That
+        // must not be mistaken for a floor: every point belongs to the ground layer, which is what
+        // the layer did before floors were modelled.
+        foreach (var map in new[] { "customs", "ground-zero", "the-lab" })
+        {
+            Assert.NotEmpty(store.FindFor(map));
+            Assert.All(store.FindFor(map), point => Assert.Null(point.FloorKey));
+        }
+    }
+
+    [Fact]
+    public void SchemaV2PointsCarryTheirFloorKeyAndNullMeansGround()
+    {
+        var store = SeasonDocumentStore.FromJson(FixtureV2);
+        Assert.Equal(2, store.SchemaVersion);
+
+        var points = store.FindFor("customs");
+
+        Assert.Equal("2nd Floor", points.Single(p => p.Id == "doc_customs_upstairs").FloorKey);
+        Assert.Null(points.Single(p => p.Id == "doc_customs_ground").FloorKey);
+    }
+
+    [Fact]
+    public void BuilderPassesTheFloorKeyThroughToTheMarker()
+    {
+        var data = new MapPoiData { NormalizedName = "customs" };
+        var map = Catalog.Find("customs")!;
+        var store = LoadStore();
+
+        var pois = PoiBuilder.Build(map, data, store, notes: null, seasonDocuments: SeasonDocumentStore.FromJson(FixtureV2));
+
+        var docs = pois.Where(p => p.Kind == PoiKind.SeasonDocuments).ToArray();
+        Assert.Equal(2, docs.Length);
+
+        // The layer name is drawn and filtered by, never displayed, so it has to survive the build
+        // unchanged -- a label like "2F" would match no floor toggle in the window.
+        Assert.Equal("2nd Floor", docs.Single(p => p.Id == "doc_customs_upstairs").FloorName);
+        Assert.Null(docs.Single(p => p.Id == "doc_customs_ground").FloorName);
+    }
+
+    [Fact]
+    public void BuilderLeavesEveryV1PointOnTheGroundLayer()
+    {
+        var data = new MapPoiData { NormalizedName = "customs" };
+        var map = Catalog.Find("customs")!;
+        var store = LoadStore();
+
+        var pois = PoiBuilder.Build(map, data, store, notes: null, seasonDocuments: SeasonDocumentStore.FromJson(Fixture));
+
+        Assert.All(
+            pois.Where(p => p.Kind == PoiKind.SeasonDocuments),
+            poi => Assert.Null(poi.FloorName));
     }
 
     [Fact]

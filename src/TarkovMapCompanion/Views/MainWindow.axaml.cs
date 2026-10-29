@@ -1373,7 +1373,7 @@ public partial class MainWindow : Window
 
         _canvas.ShowBaseLayer = _settings.ShowBaseLayer;
 
-        _session.Player.ActiveFloors = _canvas.ActiveFloors;
+        _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
 
         BuildFloorList(map);
 
@@ -2718,6 +2718,7 @@ public partial class MainWindow : Window
         {
             _canvas.ShowBaseLayer = ground.IsChecked ?? false;
             _settings.ShowBaseLayer = _canvas.ShowBaseLayer;
+            _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
             UpdateFloorHint();
             SyncMinimapLayers();
             _canvas.InvalidateVisual();
@@ -2742,7 +2743,7 @@ public partial class MainWindow : Window
                 else
                     _canvas.ActiveFloors.Remove(name);
 
-                _session.Player.ActiveFloors = _canvas.ActiveFloors;
+                _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
                 UpdateFloorHint();
                 SyncMinimapLayers();
                 _canvas.InvalidateVisual();

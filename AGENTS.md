@@ -112,9 +112,9 @@ CI runs on `windows-latest` and includes a real `--render-test` smoke test.
   coincident same-name extracts, code-named extracts), each pinned in `PoiTests.cs` /
   `UpstreamDataFixesTests.cs`. A refresh that changes the shape should fail the suite, not silently
   reintroduce one. `season-documents.json` is a third source with a different trust profile: its
-  coordinates were fitted against this repo's own artwork, so they are approximate by construction,
-  and its per-point `confirmed` flag is the only confidence signal there is — never present an
-  unconfirmed point as if it had been surveyed.
+  coordinates come from the retired pipeline's per-map formula, are exact only for spots on the main
+  drawing (see the season-documents section below), and its per-point `confirmed` flag is the only
+  confidence signal there is — never present an unconfirmed point as if it had been surveyed.
 - `.gitattributes` is load-bearing: `*.sln`/`*.bat`/`*.ps1` CRLF, everything else LF.
 - PowerShell mangles UTF-8 here. Read or compare JSON with `python`, not `ConvertFrom-Json`.
 
@@ -123,9 +123,10 @@ CI runs on `windows-latest` and includes a real `--render-test` smoke test.
 Fork of `Battleroid/tarkov-map-companion`, pushed to `BlueMess/tarkov-map-companion-self-improv`.
 **All work lands on `master`; there are no feature branches left.** It has delivered WebSync, the
 vendored-data fixes, Simplified Chinese (`40613e8`), the preferences dialog rebuilt as a
-six-category rail, Simplified Chinese as the client default, and **Chinese-client OCR end-to-end**
+six-category rail, Simplified Chinese as the client default, **Chinese-client OCR end-to-end**
 (separate game-client language setting, CJK parsing, surface→canonical candidates, measured
-thresholds; 776 tests green). Build clean.
+thresholds), and **floor-bound season documents with hand-calibrated the-lab and interchange
+coordinates** (784 tests green). Build clean.
 
 The fork's first release is **v0.13.0** (2026-10-19, `7f14ad8`), published by GitHub Actions.
 Actions are enabled for this repo now — see the trap below, because that was not true when the
@@ -161,27 +162,95 @@ single-file browser client (`Assets/index.html`). Spec and its corrections:
 `Path.Combine("tiles", NormalizedName)` to match `TileMapSource` (the bare `"tiles"` category is
 wrong). Publish is now ~62 MB (the ASP.NET Core shared framework).
 
-**Season documents ship as one layer.** `PoiKind.SeasonDocuments` draws season-1 ("KORD BREACH")
-TerraGroup document spawns from `Data/Snapshots/season-documents.json` — 334 points over 11 maps,
-321 confirmed plus 13 unconfirmed drawn dimmed with a `?`. It rides the existing
+**Season documents ship as one layer, bound to the floor toggles.** `PoiKind.SeasonDocuments` draws
+season-1 ("KORD BREACH") TerraGroup document spawns from `Data/Snapshots/season-documents.json` —
+schema v2, **242 points over 11 maps**, drawn as a solid amber dot when the source has verified one
+and as a hollow amber ring with a dashed halo when it has not (no "?" glyph: at 9 px it was
+illegible and read as a blot). It rides the existing
 `Enum.GetValues<PoiKind>()` switch generation and is independent of quest selection.
 `AppSettings` went to version 3 so an older `poiLayers` map backfills the new key instead of leaving
-the layer dark. The upstream source is Chinese-only, so `Name` and `NameZh` carry the same string —
-a deliberate exception to the English-canonical rule, because there is no English source to keep
-canonical.
+the layer dark.
+
+**A season point is only drawn while its floor is switched on.** `MapPoi.FloorName` holds the map's
+own `MapFloor.Name`; `null` means the ground layer, which is the **地面** (base-layer) toggle. The
+filter lives in `PoiOverlay.OnActiveFloor` and is applied in `DrawOne` *and* `HitTest` — a marker on
+a switched-off floor must not answer a click. `MapSession.ApplyFloorState` pushes the canvas's
+`ActiveFloors`/`ShowBaseLayer` into the overlay on every toggle and on every map load. **Only the
+season layer is filtered**: a `null` floor on an extract, loot or spawn must not be read as "ground",
+or switching to an underground level would empty the map. The WebSync client mirrors the same
+predicate against its own floor selection.
+
+**The 334-point v1 snapshot is frozen at `_work/season-docs/season-documents.v1.json` — do not
+delete it.** Its ids encode each entry's index in the scrape it was built from
+(`season_doc_<map>_<NNN>`), which is the only join back to the source pixels, and that join is how a
+regenerated export recovers the world coordinates the app already ships. Reading the file being
+regenerated would lose the join on the second run.
+
+**`--render-test` must tick every floor** (`RenderTest.cs` does, deliberately): with the defaults the
+harness would draw only the ground layer, and the `SeasonDocuments=<n>` smoke check would stop
+matching what is on the image — which is the one thing that harness exists to catch.
+
+**Regenerating the snapshot: `_work/season-docs/rebuild_season_docs.py` + `inset_regions.json`.**
+Neither is version-controlled. It re-fetches `/data/s1/<map>.json` from tarkovdoc.com, then:
+- drops transit spots (the app draws its own `Transit` POIs);
+- drops every spot whose pixel falls on a **detached floor plan** — the source posters draw upper
+  floors, interiors and basements as separate panels in the empty space around the main drawing, so
+  those pixel coordinates belong to a smaller drawing and cannot be transformed. `inset_regions.json`
+  encodes them per map as either `keepOnly` (playable drawing is a subset of the canvas) or `insets`
+  (full-bleed poster, plans painted into corners) — and **ground-zero needs both**, because eight
+  plans float *inside* the drawing's bounding box;
+- drops every spot whose floor the app has no toggle for (lighthouse 2F/3F, interchange B1);
+- keeps the existing coordinates where it has them, and places the new spots with a per-map affine
+  fitted on the kept points. If that fit does not reproduce the kept coordinates (RMS > 15 world
+  units) the new spots are reported and skipped rather than guessed.
+
+The old `scrape → namefit → merge → export_companion.mjs` chain produced the v1 file and is
+superseded as a coordinate source. Its calibration is the reason so many v1 points were unusable: the
+"anchors" it fitted were named `formula-*`, i.e. their poster pixels were **derived from a formula**,
+never measured, and it then snapped 90-odd points onto building labels (two of them onto
+`(38.7, 264.7)`). `floor-building-inventory.md` in the same directory records what the source data
+actually carries (floor yes; building only in free text).
+
+**Two maps' coordinates are measured by hand, not inherited: the-lab and interchange.**
+`panel_calibration.json` holds one affine per poster panel, fitted from control points a human picked
+in `_work/season-docs/calibrate/index.html` (poster ↔ the app's own rendered basemap; the page exports
+the pairs as JSON). `rebuild_season_docs.py` uses those affines for every spot inside the panel's bbox
+and nothing else — no fallback to the old formula. Both posters split into panels that are *separate
+frames*: the lab draws FIRST/SECOND/TECHNICAL level side by side (TECHNICAL carries no spawns), and
+interchange's mall plans are a frame of their own — the outdoor aerial is a different one, so that map
+needs both panels calibrated before its points are complete. Sample sizes are small (6–8 pairs), so
+treat a panel's RMS as the honest error bar: 0.3–3.7 world units across the four panels so far.
 
 **Every `PoiBuilder.Build` call site must pass the store.** The layer has no other entry point, so a
 call site that omits `seasonDocuments` builds a map with the layer silently missing — no error, no
 warning, just absent markers. `--render-test` prints per-kind POI counts and `SeasonDocuments=<n>` in
 that line is the smoke check; it caught exactly this after the main path was already wired.
 
-**The snapshot's refresh pipeline lives outside this repo**, at `../_work/season-docs/` (scrape →
-namefit calibration → merge → `export_companion.mjs`), next to the map artwork it calibrates against
-in `_work/season-docs/maps/`. Nothing there is version-controlled, and the default paths are
-relative to the scripts themselves. A new season means re-running that pipeline; do not hand-edit the
-JSON, and do not assume a missing directory means the data was lost.
-
 ### Traps this branch paid for (do not rediscover them)
+
+- **`_work/season-docs/maps/*/map.png` is not the source poster.** It is the retired project's own
+  artwork (interchange 3000×2506 against the poster's 7680×4320; ground-zero's copy is a tarkov.dev
+  SVG raster). `inset_bboxes.json`, written against it, is therefore wrong for the real posters and
+  was replaced by `inset_regions.json`, which was drawn against `posters/<map>.webp` and verified by
+  plotting every spot back onto the poster.
+- **A `keepOnly` box cannot exclude a plan that floats inside the drawing's bounding box.**
+  ground-zero needs eight extra `insets` entries for 2F/3F cards that sit inside it; without them a
+  spawn on one of those cards is silently kept at the wrong scale.
+- **On full-bleed posters the plans are painted on top of the terrain** (customs, factory), so "the
+  pixel is inside the drawing" does not mean "the pixel is in map space". Judge by the line-work —
+  room numbers, `1F`/`2F` labels, cream page borders — not by the background colour.
+- **Do not classify a poster as "flat" from the picture alone — check the sibling site's floor
+  alignment.** tarkovdocsmap.com stores every map's floors/interiors as separate images plus an
+  `overlayX/overlayY` telling where each sits on the main canvas: `(0,0)` for all four factory floors
+  means that map is *stacked*, and treating it as a collage deleted three of its four B1 spawns.
+  Offset entries (customs' four buildings, interchange's three floors, streets' and reserve's cards)
+  are panels. Even this is only evidence, not proof: lab/ground-zero/shoreline/lighthouse ship no
+  sub-frames at all and were classified from the drawing, so a report of "this one is not flat" from
+  someone looking at the real page outranks the mask.
+- **A clean affine fit does not mean the coordinates are right.** Every map's kept point set fits at
+  RMS 0.0 both before and after removing panel points, because the retired pipeline applied one
+  formula to *every* spot, panel space included. Decide with the mask and the spot titles, never with
+  the fit residual alone.
 
 - **A tag push to a fork whose upstream already had workflow files does nothing, silently.** This
   repo is a fork, and GitHub starts forks with Actions *disabled* when the source repo shipped

@@ -121,7 +121,7 @@ WebSync/WebSyncServer（新增，Kestrel）
 | 玩家状态 | `PlayerOverlay.Current`（`PlayerFix`）、`PlayerOverlay.History`（轨迹，最多 TrailLength=12）、`ActiveFloors` | `Rendering/PlayerOverlay.cs` |
 | 路线 | `WaypointOverlay.Waypoints`（`Waypoint{Position,Base,Number,Visited}`）、`WaypointOverlay.Next`、`SetSharedRoutes` 的 `SharedRoute{Owner,Map,Color,Points}` | `Rendering/WaypointOverlay.cs` |
 | 引导线 | `ExtractLineOverlay.Target`（`MapPoi`）、`.Waypoint`、`.PlayerPosition`、`.PlayerYawDegrees`、`.GuideBase`、`.DistanceMeters`、`.RelativeBearingDegrees`（后三者为可空） | `Rendering/ExtractLineOverlay.cs` |
-| POI | `PoiOverlay.Pois` / `Visible`（`IDictionary<PoiKind,bool>`）/ `Availability`；`MapPoi{Id,Name,NameZh,Kind,Position,Base,Elevation,IsConditional,IsSingleUse,AvailableThisRaid}` | `Rendering/PoiOverlay.cs`、`Data/MapPoi.cs` |
+| POI | `PoiOverlay.Pois` / `Visible`（`IDictionary<PoiKind,bool>`）/ `Availability` / `ActiveFloors` / `ShowBaseLayer`；`MapPoi{Id,Name,NameZh,Kind,Position,Base,Elevation,FloorName,IsConditional,IsSingleUse,AvailableThisRaid,IsUnverified}` | `Rendering/PoiOverlay.cs`、`Data/MapPoi.cs` |
 | 任务 | `QuestOverlay.Marks`（`QuestMark` record：`TaskId/TaskName/ObjectiveId/Description/SKColor Color/GamePosition Position/int Index/bool OneOf/IReadOnlyList<(double X,double Z)> Outline`）。**⚠️ 唯一不返回快照的 Overlay**：`Marks` 在锁内直接返回 live `_marks`（其他 Overlay 都在锁内 copy）——见 §4.1 线程契约 | `Rendering/QuestOverlay.cs` |
 | 注释 | `AnnotationStore`（事件 `MapSession.AnnotationsChanged`）；`MapAnnotation{Id,Map,X,Z,Text,Author}` | `Data/AnnotationStore.cs` |
 | 队伍 | `PartySession.Peers`（`PartyPeer{Name,Map,Position,Yaw,HasPosition,IsSelf,Color,LatencyMs,...}`）、**`PartySession.Routes` 是 `IReadOnlyList<PeerRoute>`，而 `PeerRoute{Name,Map,List<RoutePoint> Points}`——没有 `Color`，它不是 `SharedRoute`**；事件 `Changed`/`RoutesChanged`/`PingReceived`（`EventHandler<PeerPosition>`） | `Party/PartySession.cs` |
@@ -343,7 +343,8 @@ src/TarkovMapCompanion/WebSync/
   "peerRoutes":   [{ "name": "队友B", "points": [{ "x": 1.0, "z": 2.0 }] }],                       // PartySession.Routes 的 PeerRoute，无 Color，客户端按 PartyPeer.Color 上色
   "pois": [{ "id": "...", "kind": "Extract", "name": "码头",           // name 用 Localizer.Pick 后的 DisplayName
              "x": 1.0, "z": 2.0, "available": true, "conditional": false,
-             "singleUse": false, "elevation": [0.0, 3.0] }],
+             "singleUse": false, "elevation": [0.0, 3.0],
+             "floor": null, "unverified": false }],                    // floor=null 表示地面层；unverified 只有赛季文件会用
   "quests": [{ "label": "...", "x": 1.0, "z": 2.0 }],                  // QuestMark 展开
   "annotations": [{ "id": "...", "x": 1.0, "z": 2.0, "text": "...", "author": "..." }],
   "peers": [{ "name": "...", "x": 1.0, "z": 2.0, "yawDegrees": 90.0, "color": "#RRGGBB" }],
@@ -451,7 +452,7 @@ src/TarkovMapCompanion/WebSync/
    - `tiles`：建一个绝对定位瓦片层（按 minZoom 起步，支持 zoom 级别切换），同坐标换算。
 3. 顶层 `<canvas>`（设备像素比自适应）绘制覆盖层，与底图共用 CSS transform。绘制优先级从低到高：POI → 注释 → 任务 → sharedRoutes → waypoints → 引导线（虚线 + 距离/方位角标签）→ peers → pings（扩散圈动画，3s 淡出）→ trail → 玩家（三角朝向标 + 脉冲圈）。
 4. 楼层：按钮列表来自 `map.floors`；`settings.followPlayerFloor=true` 时收到 `player.floor` 变化自动切换（重新请求对应 floors 的 SVG / 换瓦片模板），手动点击后暂停自动跟随 30s。
-5. POI 不可用的（`available=false`）降透明度 0.4；条件/一次性撤离点加角标。
+5. POI 不可用的（`available=false`）降透明度 0.4；条件/一次性撤离点加角标。带 `floor` 的 POI 只在对应楼层勾选时绘制（`floor=null` 跟随「地面层」开关），与桌面 `PoiOverlay.OnActiveFloor` 同一规则；`unverified=true` 的赛季文件点画成空心环 + 虚线外圈。
 6. 连接状态指示：绿点=已连接，黄点=重连中；断线横幅提示。
 
 ### 7.3 M3 测试

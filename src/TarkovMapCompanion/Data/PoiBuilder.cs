@@ -637,16 +637,21 @@ public static class PoiBuilder
             if (!string.IsNullOrWhiteSpace(point.KeyRequiredZh))
                 details.Add($"需钥匙：{point.KeyRequiredZh}");
 
-            var name = point.NameZh ?? "";
+            // English is canonical now that the source supplies it: it is what the rest of the app
+            // keys and matches on, and it is what an English UI should show. A v1 snapshot has no
+            // English title, so the composed Chinese name stands in for both.
+            var name = point.NameEn ?? point.NameZh ?? "";
+            var nameZh = point.NameZh ?? name;
 
             pois.Add(new MapPoi
             {
                 Kind = PoiKind.SeasonDocuments,
                 Id = point.Id,
                 Name = name,
-                NameZh = name,
+                NameZh = nameZh,
                 Position = new GamePosition(point.X, 0, point.Z),
                 Base = map.Projection.ToBase(point.X, point.Z),
+                FloorName = point.FloorKey,
                 Details = details,
                 DetailsZh = details,
                 IsUnverified = !point.Confirmed,

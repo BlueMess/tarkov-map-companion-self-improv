@@ -1,3 +1,4 @@
+using SkiaSharp;
 using TarkovMapCompanion.Data;
 using TarkovMapCompanion.Data.Models;
 using TarkovMapCompanion.Maps;
@@ -489,6 +490,127 @@ public sealed class PoiTests : IDisposable
 
         var screen = viewport.ToScreen(basePoint);
         Assert.Null(overlay.HitTest(viewport, screen.X, screen.Y));
+    }
+
+    [Fact]
+    public void SeasonMarkerOnASwitchedOnFloorIsDrawnAndPickable()
+    {
+        var (map, viewport) = FitMap("customs");
+        var basePoint = map.ToBase(new GamePosition(0, 0, 0));
+
+        var overlay = new PoiOverlay { Map = map };
+        overlay.SetPois([SeasonDocument(basePoint, "2nd Floor")]);
+        overlay.Visible[PoiKind.SeasonDocuments] = true;
+
+        // Nothing ticked yet: the marker is on a level that is not on screen, so it is neither
+        // drawn nor pickable.
+        Assert.False(Draws(overlay, viewport, basePoint));
+        var screen = viewport.ToScreen(basePoint);
+        Assert.Null(overlay.HitTest(viewport, screen.X, screen.Y));
+
+        overlay.ActiveFloors = ["2nd Floor"];
+
+        Assert.True(Draws(overlay, viewport, basePoint));
+        Assert.Equal("Document", overlay.HitTest(viewport, screen.X, screen.Y)?.Name);
+
+        // A different floor being on does not bring it back.
+        overlay.ActiveFloors = ["3rd Floor"];
+
+        Assert.False(Draws(overlay, viewport, basePoint));
+        Assert.Null(overlay.HitTest(viewport, screen.X, screen.Y));
+    }
+
+    [Fact]
+    public void SeasonMarkerWithNoFloorFollowsTheGroundLayerToggle()
+    {
+        var (map, viewport) = FitMap("customs");
+        var basePoint = map.ToBase(new GamePosition(0, 0, 0));
+
+        var overlay = new PoiOverlay { Map = map };
+        overlay.SetPois([SeasonDocument(basePoint, floorName: null)]);
+        overlay.Visible[PoiKind.SeasonDocuments] = true;
+
+        // Ground is on by default, so the marker is there without any wiring.
+        Assert.True(Draws(overlay, viewport, basePoint));
+
+        overlay.ShowBaseLayer = false;
+        var screen = viewport.ToScreen(basePoint);
+
+        Assert.False(Draws(overlay, viewport, basePoint));
+        Assert.Null(overlay.HitTest(viewport, screen.X, screen.Y));
+
+        // Ticking every named floor is not the same as ticking the ground layer.
+        overlay.ActiveFloors = ["2nd Floor", "3rd Floor", "Underground"];
+
+        Assert.False(Draws(overlay, viewport, basePoint));
+
+        overlay.ShowBaseLayer = true;
+
+        Assert.True(Draws(overlay, viewport, basePoint));
+    }
+
+    [Fact]
+    public void FloorTogglesLeaveLayersWithoutAFloorAlone()
+    {
+        var (map, viewport) = FitMap("customs");
+        var basePoint = map.ToBase(new GamePosition(0, 0, 0));
+
+        var overlay = new PoiOverlay { Map = map };
+        overlay.SetPois([new MapPoi
+        {
+            Kind = PoiKind.LootContainer,
+            Name = "Jacket",
+            Position = new GamePosition(0, 0, 0),
+            Base = basePoint,
+        }]);
+        overlay.Visible[PoiKind.LootContainer] = true;
+
+        // A layer with no floor in its source is drawn on whatever level is showing. Reading its
+        // missing floor as "ground" would empty the map whenever an underground level is selected.
+        overlay.ShowBaseLayer = false;
+        overlay.ActiveFloors = [];
+
+        Assert.True(Draws(overlay, viewport, basePoint));
+
+        var screen = viewport.ToScreen(basePoint);
+        Assert.Equal("Jacket", overlay.HitTest(viewport, screen.X, screen.Y)?.Name);
+    }
+
+    private static (GameMap Map, Viewport Viewport) FitMap(string key)
+    {
+        var map = Catalog.Find(key)!;
+        var viewport = new Viewport(map.BaseRect);
+        viewport.Resize(400, 300);
+        viewport.FitAll();
+        return (map, viewport);
+    }
+
+    private static MapPoi SeasonDocument(MapPoint basePoint, string? floorName) => new()
+    {
+        Kind = PoiKind.SeasonDocuments,
+        Name = "Document",
+        Position = new GamePosition(0, 0, 0),
+        Base = basePoint,
+        FloorName = floorName,
+    };
+
+    /// <summary>
+    /// Whether the overlay put paint down at the marker's own screen position.
+    /// </summary>
+    /// <remarks>
+    /// A single marker either draws itself where it is or it does not, so sampling its centre pixel
+    /// is the whole question. Cheaper and far less brittle than diffing a rendered PNG.
+    /// </remarks>
+    private static bool Draws(PoiOverlay overlay, Viewport viewport, MapPoint basePoint)
+    {
+        using var bitmap = new SKBitmap((int)viewport.Width, (int)viewport.Height);
+        using var canvas = new SKCanvas(bitmap);
+
+        overlay.Draw(canvas, viewport);
+        canvas.Flush();
+
+        var screen = viewport.ToScreen(basePoint);
+        return bitmap.GetPixel((int)screen.X, (int)screen.Y).Alpha > 0;
     }
 
     [Fact]
