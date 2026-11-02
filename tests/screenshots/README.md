@@ -6,10 +6,11 @@ in-game extraction panel open. They are the reference material for
 every judgement call in `Vision/ExtractPanelParser.cs`, `Vision/NameMatcher.cs` and
 `Vision/ExitAvailability.cs` came out of reading these.
 
-**These are not used by the automated tests.** The tests feed the parser *captured OCR text* — the
-lines `WindowsOcrTextReader` actually returned — because that is what the parser really consumes, and
-a text fixture fails loudly instead of failing by image-diff. The images are for a human or an agent
-to run end-to-end.
+**These are not used by the automated tests** — with one exception, added later: the *filenames*
+are (see "The same frames are floor fixtures" below). The OCR tests feed the parser *captured OCR
+text* — the lines `WindowsOcrTextReader` actually returned — because that is what the parser really
+consumes, and a text fixture fails loudly instead of failing by image-diff. The images are for a
+human or an agent to run end-to-end.
 
 ## Running one
 
@@ -64,6 +65,39 @@ marker placed on the wrong side of the map is not.
 
 Frame 4 also carries `前往头室` for `前往实验室` in one earlier capture; the kept frame reads it
 cleanly, and the damaged form is pinned as a text fixture.
+
+## The same frames are floor fixtures
+
+The names carry a real position and height, so the five frames are also the fixtures for
+floor-following: `RealScreenshotFloorTests` puts each name through `ScreenshotNameParser` — the app's
+only input — and pins the map and the floor it resolves to. Only the *names* are read, never the
+pixels, which is what makes it safe to run in CI.
+
+```powershell
+$env:DOTNET_ROOT="$env:USERPROFILE\.dotnet"; $env:PATH="$env:USERPROFILE\.dotnet;$env:PATH"
+dotnet run --project src/TarkovMapCompanion -- --floor-test
+```
+
+`base` below means no floor claims the position, which is the ground layer:
+
+| # | Fixture | Map | y | Floor |
+|---|---|---|---|---|
+| 1 | `2026-10-12[20-52]…` | Customs | 1.63 | base |
+| 2 | `2026-10-13[19-48]…` | Ground Zero | 24.31 | base — between Garage `[-1000,21]` and 2nd Floor `[26,32.3]` |
+| 3 | `2026-10-16[18-14]…` | Factory | -1.12 | **Tunnels** |
+| 4 | `2026-10-17[11-32]…` | Streets of Tarkov | 2.56 | base — the lowest band starts at y=10 |
+| 5 | `2026-10-18[15-16]…` | Factory | -1.13 | **Tunnels** |
+
+The probe then replays the five in order through `FloorFollow.Decide` and prints each decision, so
+"a floor is switched to, the same state again is a no-op, the ground comes back" is visible rather
+than asserted. Pass a folder and a map to try it on your own screenshots —
+`--floor-test "<folder>" factory` — because a position alone does not name a map: Factory's capture
+sits inside twelve of the thirteen maps' bounds.
+
+The half a test cannot cover is the app *visibly* switching:
+`scripts\floor-follow-demo.ps1 -Folder "<the app's screenshot folder>"` drops re-named copies of
+frame 5 into that folder with a scripted walk of heights (ground → 2nd → 3rd → ground → Tunnels) and
+deletes them again. The app has to be running and watching that folder first.
 
 ## Provenance
 

@@ -49,6 +49,15 @@ internal static class Program
         if (args.Length > 0 && args[0] is "--find-logs")
             return Tools.FindLogs.Run(args[1..]);
 
+        // Reads real screenshots by name and says which floor the app would show for each, then
+        // replays the decision as one walk. Needs no game and no window.
+        //   TarkovMapCompanion --floor-test [screenshot folder] [map]
+        if (args.Length > 0 && args[0] is "--floor-test")
+            return Tools.FloorProbe.Run(
+                args.Length > 1 ? args[1] : null,
+                args.Length > 2 ? args[2] : null,
+                Console.Out);
+
         if (args.Length > 0 && args[0] is "--party-test")
             return Tools.PartyTest.RunAsync(args[1..]).GetAwaiter().GetResult();
 
