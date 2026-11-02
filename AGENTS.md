@@ -19,7 +19,8 @@ scripts\publish.ps1                             # single-file publish -> publish
 ```
 
 `global.json` pins 8.0.421 (`rollForward: latestFeature`); without it nothing builds. To diagnose
-without a window: `--render-test`, `--read-exits`, `--find-screenshots`, `--find-logs`.
+without a window: `--render-test`, `--read-exits`, `--find-screenshots`, `--find-logs`,
+`--floor-test`.
 
 **Run those diagnostics through `dotnet run`, not `publish\TarkovMapCompanion.exe`.** The project is
 `OutputType=WinExe` (rightly — no console window when the user double-clicks it), and a GUI-subsystem
@@ -125,8 +126,9 @@ Fork of `Battleroid/tarkov-map-companion`, pushed to `BlueMess/tarkov-map-compan
 vendored-data fixes, Simplified Chinese (`40613e8`), the preferences dialog rebuilt as a
 six-category rail, Simplified Chinese as the client default, **Chinese-client OCR end-to-end**
 (separate game-client language setting, CJK parsing, surface→canonical candidates, measured
-thresholds), and **floor-bound season documents with hand-calibrated the-lab and interchange
-coordinates** (784 tests green). Build clean.
+thresholds), **floor-bound season documents with hand-calibrated the-lab and interchange
+coordinates**, and **per-map floor following** (main map + minimap, opt-in per map, default off;
+804 tests green). Build clean.
 
 The fork's first release is **v0.13.0** (2026-10-19, `7f14ad8`), published by GitHub Actions.
 Actions are enabled for this repo now — see the trap below, because that was not true when the
@@ -225,6 +227,60 @@ treat a panel's RMS as the honest error bar: 0.3–3.7 world units across the fo
 call site that omits `seasonDocuments` builds a map with the layer silently missing — no error, no
 warning, just absent markers. `--render-test` prints per-kind POI counts and `SeasonDocuments=<n>` in
 that line is the smoke check; it caught exactly this after the main path was already wired.
+
+**Floor following ships, per map, off by default.** After a fix lands, the main map and the minimap
+switch to the floor the player is on — but only for maps the user ticked in **地图显示 / Map Display →
+楼层跟随**. `AppSettings.AutoFloorSwitch` is a `Dictionary<string,bool>` keyed by `NormalizedName`
+where **a missing key reads as off** (`AutoFloorSwitchFor`), so an old settings file needs no version
+bump and no migration: an empty map is a fully-defaulted state. The preferences list every map; the
+four with no floors (woods, lighthouse, terminal, the-labyrinth) are listed and greyed rather than
+hidden, because a map silently missing from the list reads as a bug.
+
+The decision is a pure function — `Maps/FloorFollow.cs`, `FloorFollow.Decide(...)`, 9 tests — because
+both windows have no UI test coverage at all and this is the only part that can be asserted. It returns
+`null` when the feature is off, when there is no map, **or when the view already shows exactly that**;
+the last case is what keeps a burst of screenshots from re-applying the same state (each application is
+a full repaint plus a push to the minimap and every WebSync client). A position that belongs to a floor
+yields `ShowBaseLayer = false` and only that floor ticked: the artwork stacks floors as opaque geometry,
+so an underground level is invisible until the ground layer is off. No floor claiming the position is
+the base level, so the ground comes back on and no floor is ticked.
+
+**That `ShowBaseLayer` is transient view state and is never written to `AppSettings.ShowBaseLayer`.**
+`MainWindow.SyncFloorToggles` writes every floor checkbox from the canvas, and the ground checkbox's
+handler is the only one that calls `Apply` — i.e. persists — so it is guarded by `_syncingFloors`;
+without the guard, following the player into a basement would save "ground off" and the next map or the
+next launch would show a hole. A map switch restores the user's own `ShowBaseLayer` (`OnMapChanged`) and
+the next fix re-applies the floor.
+
+The minimap carries no state of its own: `MirrorLayers` still receives the two values, and its
+bottom-left badge names the floor from `FloorAt(fix.Position)` — **not** from the ticked floors, so it
+still tells the truth when the feature is off or the user overrode the floor selection. It shows only
+the `Localizer.FloorLabel` name (no prefix), falls back to `Layer.Ground` when nothing claims the
+position, and is hidden until the first fix of the session. Two things it is not allowed to break:
+`IsHitTestVisible` stays false (a press there must reach the window and start a drag), and it is
+overlaid, not given a row, so the canvas and the resize grip keep their pixels.
+
+**Floor resolution has exactly one implementation: `GameMap.FloorAt`.** The player marker's dimming
+(`PlayerOverlay`), the WebSync `player.floor` field and the follow feature all call it. `MapFloor.Covers`
+is the data contract underneath and should not be re-created at a call site: declaration order is
+priority, not best fit (customs has two floors claiming `[5.7,10000]`), an extent with no `bounds`
+returns true immediately and so silences the extents after it, and `±10000` means "unbounded", never a
+real height. `tests/.../PlayerFloorTests.cs` pins the answers against the vendored data — including a
+real Shoreline capture that resolves to the base level — so a data refresh that reshapes a band fails a
+test instead of silently moving the player to another floor.
+
+**Verifying it without a game client** — the five real Chinese-client frames in `tests/screenshots`
+carry real EFT filenames, so they are also floor fixtures. `--floor-test [folder] [map]` prints the
+position, map and resolved floor for each and replays them through `FloorFollow.Decide`; the same table
+is enforced by `RealScreenshotFloorTests`. Two of the five really do resolve to Factory's Tunnels, so
+the fixture set covers both a floor and the base level. `scripts\floor-follow-demo.ps1 -Folder <screenshots>`
+is the other half: it drops re-named copies of one real frame into the watched folder as a scripted walk
+(ground → 2F → 3F → ground → Tunnels), which is the only way to see the switching, the checkbox sync and
+the minimap badge with your own eyes. It writes into the game's screenshot folder, so it carries a
+`2031-01-01` marker date, refuses any `-Map` but Factory (the step heights are Factory's bands), and
+deletes exactly the paths it created. Note it **cannot** identify a map from a position: `ContainsPosition`
+is a bounds test in each map's own base space and Factory's frames are claimed by 12 of the 13 maps, so
+the probe takes the map from its table or an argument rather than guessing.
 
 ### Traps this branch paid for (do not rediscover them)
 

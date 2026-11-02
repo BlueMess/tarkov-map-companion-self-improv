@@ -490,6 +490,7 @@ change you want to see, or you will keep launching the binary from before the fi
 | `--find-logs [folder] [all]` | Prints where Tarkov's own logs were found, what the parser made of the newest one, and any location name this build does not recognize. What to run when the map stops switching. `all` reads every launch's log rather than only the newest. |
 | `--party-test [name] [local]` / `--party-test join <code> [name]` | Hosts or joins a position-sharing session from the console. Says whether this network can host at all, which is the one part that cannot be tested any other way. `local` uses loopback so two processes on one machine can talk. |
 | `--read-exits <screenshot.png> [map] [whole]` | Reads the extraction panel out of one screenshot and prints every stage: the raw text, the rows it grouped, and which exits it matched. What to run when a read goes wrong. |
+| `--floor-test [folder] [map]` | Reads every screenshot name in a folder, prints the position, the map and the floor each one resolves to, then replays them through the floor-following state machine and says what it would switch to. Defaults to the repository's `tests\screenshots`. What to run when the map stays on the wrong level. |
 
 There is no LAN-sync command line mode: WebSync is turned on and configured in **Settings**, and
 `--party-test` will not start it. The served page carries one automated check of its own —
