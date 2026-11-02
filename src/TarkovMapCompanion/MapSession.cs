@@ -258,15 +258,18 @@ public sealed class MapSession : IDisposable
     /// <remarks>
     /// The canvas owns this state (its <c>ActiveFloors</c>/<c>ShowBaseLayer</c> are what the floor
     /// checkboxes write to) and there is no event to subscribe to, so it is pushed in after every
-    /// change and again on every map load, which resets the canvas's own copy. Both overlays take
-    /// the same values the artwork is drawn with, so a marker can never sit on a level that is not
-    /// on screen.
+    /// change and again on every map load, which resets the canvas's own copy. Every overlay that
+    /// filters by level takes the same values the artwork is drawn with, so a marker or a place name
+    /// can never sit on a level that is not on screen. The place names are filtered only where the
+    /// catalog gives them a height band; see <see cref="Rendering.LandmarkOverlay.IsOnActiveFloor"/>.
     /// </remarks>
     internal void ApplyFloorState(IReadOnlyCollection<string> activeFloors, bool showBaseLayer)
     {
         Player.ActiveFloors = activeFloors;
         Pois.ActiveFloors = activeFloors;
         Pois.ShowBaseLayer = showBaseLayer;
+        Landmarks.ActiveFloors = activeFloors;
+        Landmarks.ShowBaseLayer = showBaseLayer;
     }
 
     public ExtractLineOverlay ExtractLine { get; }

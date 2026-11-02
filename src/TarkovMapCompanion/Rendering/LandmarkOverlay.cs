@@ -11,13 +11,15 @@ namespace TarkovMapCompanion.Rendering;
 /// <para>
 /// The names come from the map catalog's <c>labels[]</c> (<see cref="GameMap.Labels"/>), placed with
 /// the same projection every marker uses. They are always English and are drawn straight from
-/// <see cref="MapLabelJson.Text"/>: this is place data, not UI text, so it must never pass through
-/// the localizer.
+/// <see cref="MapLabel.Text"/>: this is place data, not UI text, so it must never pass through the
+/// localizer.
 /// </para>
 /// <para>
-/// A label's <c>top</c>/<c>bottom</c> are a game-world height band (which floors it belongs to), not
-/// a pixel nudge, so the overlay ignores them and positions purely from <c>[x, z]</c>. <c>size</c>
-/// is a percentage with 100 as the baseline; <c>rotation</c> is degrees about the anchor.
+/// A label's <c>top</c>/<c>bottom</c> are a game-world height band, not a pixel nudge, and they now
+/// decide which floors a name is drawn on: <see cref="GameMap"/> resolves them to floor names once,
+/// and <see cref="IsOnActiveFloor"/> filters against the selection the user has ticked. Positioning
+/// is still purely from <c>[x, z]</c>, which is what the source gives. <c>size</c> is a percentage
+/// with 100 as the baseline; <c>rotation</c> is degrees about the anchor.
 /// </para>
 /// </remarks>
 public sealed class LandmarkOverlay : IMapOverlay
@@ -36,7 +38,38 @@ public sealed class LandmarkOverlay : IMapOverlay
 
     public GameMap Map { get; set; }
 
+    /// <summary>
+    /// Floors the canvas is showing; null until the session pushes it, which draws every name.
+    /// </summary>
+    public IReadOnlyCollection<string>? ActiveFloors { get; set; }
+
+    /// <summary>
+    /// Whether the ground level is drawn. Only matters to names that declare a floor band; see
+    /// <see cref="IsOnActiveFloor"/>.
+    /// </summary>
+    public bool ShowBaseLayer { get; set; } = true;
+
     public LandmarkOverlay(GameMap map) => Map = map;
+
+    /// <summary>
+    /// Whether this place name belongs to a level the user is showing. A name whose band no floor
+    /// claims is the base level, so it follows <see cref="ShowBaseLayer"/>. A name the source says
+    /// nothing about (<see cref="MapLabel.HasFloorData"/> false) is never hidden: dropping data we
+    /// cannot place would delete the whole layer on customs, streets, woods and lighthouse.
+    /// </summary>
+    public bool IsOnActiveFloor(MapLabel label)
+    {
+        if (ActiveFloors is null)
+            return true;
+
+        if (!label.HasFloorData)
+            return true;
+
+        if (label.Floors.Any(floor => ActiveFloors.Contains(floor)))
+            return true;
+
+        return label.Floors.Count == 0 && ShowBaseLayer;
+    }
 
     public void Draw(SKCanvas canvas, Viewport viewport)
     {
@@ -59,10 +92,10 @@ public sealed class LandmarkOverlay : IMapOverlay
 
         foreach (var label in Map.Labels)
         {
-            if (label.Position is not { Count: >= 2 } position || string.IsNullOrEmpty(label.Text))
+            if (!IsOnActiveFloor(label) || string.IsNullOrEmpty(label.Text))
                 continue;
 
-            var screen = viewport.ToScreen(Map.Projection.ToBase(position[0], position[1]));
+            var screen = viewport.ToScreen(Map.Projection.ToBase(label.X, label.Z));
 
             // size is a percentage, with 100 (or a missing value) as the baseline.
             var textSize = BaseTextSize * (float)((label.Size ?? 100) / 100.0);

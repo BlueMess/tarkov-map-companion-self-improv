@@ -127,8 +127,8 @@ vendored-data fixes, Simplified Chinese (`40613e8`), the preferences dialog rebu
 six-category rail, Simplified Chinese as the client default, **Chinese-client OCR end-to-end**
 (separate game-client language setting, CJK parsing, surface→canonical candidates, measured
 thresholds), **floor-bound season documents with hand-calibrated the-lab and interchange
-coordinates**, and **per-map floor following** (main map + minimap, opt-in per map, default off;
-804 tests green). Build clean.
+coordinates), **per-map floor following** (main map + minimap, opt-in per map, default off), and
+**place names bound to the floor they sit on** (827 tests green). Build clean.
 
 The fork's first release is **v0.13.0** (2026-10-19, `7f14ad8`), published by GitHub Actions.
 Actions are enabled for this repo now — see the trap below, because that was not true when the
@@ -281,6 +281,35 @@ the minimap badge with your own eyes. It writes into the game's screenshot folde
 deletes exactly the paths it created. Note it **cannot** identify a map from a position: `ContainsPosition`
 is a bounds test in each map's own base space and Factory's frames are claimed by 12 of the 13 maps, so
 the probe takes the map from its table or an argument rather than guessing.
+
+**Place names (地点名称 / layer `ShowLandmarks`) are floor-bound wherever the catalog gives them a
+height band.** The catalog's `labels[]` has no floor field, but `top`/`bottom` are a **game-world Y
+band** — the same axis as `layers[].extents[].height` — so `GameMap` resolves each entry once into
+`MapLabel.Floors` and `LandmarkOverlay.IsOnActiveFloor` filters against the ticked floors;
+`MapSession.ApplyFloorState` pushes the same two values it already pushes to `Pois`. Four rules, each
+of which looks like a detail and is not:
+
+- **A band with extent needs *interior* overlap with a floor's height extent** (`MapFloor.CoversBand`);
+  touching a boundary is not overlap. Interchange's 2nd Floor is `[25,34]` and 3rd Floor `[34,1000]`,
+  and 30 shop names sit at exactly 34 — an inclusive test (right for a *point*, which is what
+  `Covers`/`FloorAt` test) draws that entire 3F row over the 2F view, i.e. it removes most of the
+  clutter this feature exists for. A degenerate band is a point and keeps the inclusive test:
+  ground-zero's `Science Office` is 28/28, exactly 2nd Floor's floor height, and must stay on it.
+- **A one-sided band is a point, not a half-infinite slab.** The 27 reserve names carry only
+  `bottom: -6`, which is that map's own ground height; read as a slab, 12 of them land on reserve's
+  2nd–4th floors. `CoversBand` keeps the unbounded contract, `GameMap.FloorsOverlappingBand` is the
+  call site that decides a lone bound means one height.
+- **A name the source says nothing about is never hidden.** 118 of 303 labels carry no band at all
+  (all of customs, streets, woods, lighthouse, 10 of ground-zero) and dropping them would delete the
+  layer on four maps; a name whose band no floor claims is the base level, gated on the ground toggle,
+  which is what makes interchange's outdoor names vanish on a 2F view. `HasFloorData` distinguishes
+  "unplaceable" from "base level" — merging the two is the easy bug.
+- **`LandmarkOverlay.ActiveFloors` is nullable on purpose**: null means the session has not pushed yet
+  and every name draws, which is what keeps `--render-test`'s `labels N place names` line an
+  unfiltered smoke check. The minimap needs no wiring (it draws the same overlay instance); WebSync
+  sends no place names at all. `tests/.../LandmarkFloorTests.cs` pins the resolved floors of ten real
+  labels (and the boundary rule both ways) against the vendored catalog, so a data refresh that
+  reshapes a band fails a test instead of silently moving a name.
 
 ### Traps this branch paid for (do not rediscover them)
 

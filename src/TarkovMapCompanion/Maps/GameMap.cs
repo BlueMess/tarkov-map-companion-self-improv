@@ -35,6 +35,67 @@ public sealed record MapFloor(
 
         return false;
     }
+
+    /// <summary>
+    /// The band form of <see cref="Covers"/>: true when any height between <paramref name="low"/>
+    /// and <paramref name="high"/> at this x/z belongs to this floor. A null bound means unbounded on
+    /// that side. Place names are the only caller -- they carry a height band, not a single point.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The test is "do the two bands overlap", not "which band wins at one height", so the 999,
+    /// ±10000 and similar sentinel values in the data need no special case: the extents use the same
+    /// convention, and overlap resolves them exactly as it resolves any other band.
+    /// </para>
+    /// <para>
+    /// A band with extent (<c>low &lt; high</c>) has to overlap the extent's interior: touching at
+    /// one boundary is <em>not</em> an overlap, so a name spanning [34, 999] is on the floor that
+    /// starts at 34 and not also on the one that ends there. That is what keeps interchange's 30
+    /// shop names, all of which sit at exactly 34 -- the height the two mall floors share -- off the
+    /// 2nd-floor view. A degenerate band (or a single height, such as ground-zero's
+    /// <c>Science Office</c> at 28/28) is a point, and a point exactly on a floor's own floor height
+    /// belongs to that floor, so that case keeps <see cref="Covers"/>'s inclusive test.
+    /// </para>
+    /// <para>
+    /// Bounds in either order are accepted; an inverted pair is swapped rather than silently
+    /// matching nothing.
+    /// </para>
+    /// </remarks>
+    public bool CoversBand(double x, double z, double? low, double? high)
+    {
+        var bandLow = low ?? double.NegativeInfinity;
+        var bandHigh = high ?? double.PositiveInfinity;
+
+        if (bandLow > bandHigh)
+            (bandLow, bandHigh) = (bandHigh, bandLow);
+
+        var point = bandLow == bandHigh;
+
+        foreach (var extent in Extents)
+        {
+            var height = extent.Height;
+            if (height is { Count: >= 2 })
+            {
+                var disjoint = point
+                    ? bandLow < height[0] || bandLow > height[1]
+                    : bandHigh <= height[0] || bandLow >= height[1];
+
+                if (disjoint)
+                    continue;
+            }
+
+            if (extent.Bounds is not { Count: > 0 })
+                return true;
+
+            foreach (var footprint in extent.Bounds)
+            {
+                if (footprint.Contains(x, z))
+                    return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -95,9 +156,10 @@ public sealed class GameMap
                 layer.Extents ?? []))
             .ToArray();
 
-        Labels = variant.Labels?
+        Labels = (variant.Labels ?? [])
             .Where(label => label.Position is { Count: >= 2 })
-            .ToArray() ?? [];
+            .Select(ResolveLabel)
+            .ToArray();
     }
 
     public string NormalizedName { get; }
@@ -134,7 +196,76 @@ public sealed class GameMap
     public (double Min, double Max)? HeightRange { get; }
 
     public IReadOnlyList<MapFloor> Floors { get; }
-    public IReadOnlyList<MapLabelJson> Labels { get; }
+
+    /// <summary>
+    /// The place names the artwork carries, with their height band already resolved to floors so the
+    /// renderer does no per-frame work.
+    /// </summary>
+    public IReadOnlyList<MapLabel> Labels { get; }
+
+    /// <summary>
+    /// Turns one catalog entry into a resolved <see cref="MapLabel"/>. Runs once, in the constructor.
+    /// </summary>
+    private MapLabel ResolveLabel(MapLabelJson source)
+    {
+        var x = source.Position![0];
+        var z = source.Position![1];
+        var hasFloorData = source.Top is not null || source.Bottom is not null;
+
+        return new MapLabel
+        {
+            Text = source.Text,
+            X = x,
+            Z = z,
+            Size = source.Size,
+            Rotation = source.Rotation,
+            HasFloorData = hasFloorData,
+            Floors = hasFloorData ? FloorsOverlappingBand(x, z, source.Top, source.Bottom) : [],
+        };
+    }
+
+    /// <summary>
+    /// The floors a place name's height band overlaps, in floor declaration order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A source that gives both bounds is a band, and either order is accepted (<c>top</c> above
+    /// <c>bottom</c> is the normal shape, but one inverted pair would otherwise match nothing).
+    /// </para>
+    /// <para>
+    /// A source that gives only one bound is read as a <em>point</em> at that height, not as a
+    /// half-infinite slab. That is the measured reading of the data: the vendored catalog has 27
+    /// such labels, all reserve, all carrying <c>bottom: -6</c> and no <c>top</c>, and -6 is that
+    /// map's own ground height. Treating the missing side as unbounded below drags 12 of them
+    /// (tarmac, dome, the pawns) onto reserve's 2nd-4th floors, which the source plainly does not
+    /// mean. <see cref="MapFloor.CoversBand"/> keeps the unbounded reading for its own contract;
+    /// this is the call site that decides what a lone bound means.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<string> FloorsOverlappingBand(double x, double z, double? top, double? bottom)
+    {
+        double? low, high;
+
+        if (top is { } t && bottom is { } b)
+        {
+            low = Math.Min(t, b);
+            high = Math.Max(t, b);
+        }
+        else
+        {
+            low = high = top ?? bottom;
+        }
+
+        var floors = new List<string>();
+
+        foreach (var floor in Floors)
+        {
+            if (floor.CoversBand(x, z, low, high))
+                floors.Add(floor.Name);
+        }
+
+        return floors;
+    }
 
     /// <summary>
     /// The floor that claims this position, or null when none does — which means the base level.
