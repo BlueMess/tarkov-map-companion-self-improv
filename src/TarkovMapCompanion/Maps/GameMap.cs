@@ -136,6 +136,16 @@ public sealed class GameMap
     public IReadOnlyList<MapFloor> Floors { get; }
     public IReadOnlyList<MapLabelJson> Labels { get; }
 
+    /// <summary>
+    /// The floor that claims this position, or null when none does — which means the base level.
+    /// </summary>
+    /// <remarks>
+    /// Declaration order is priority, not best fit: tarkov.dev's height bands overlap (customs has
+    /// two floors claiming [5.7,10000]) and the footprints are what separate them, so this must stay
+    /// the same "first one wins" rule the map data was authored against.
+    /// </remarks>
+    public MapFloor? FloorAt(GamePosition position) => Floors.FirstOrDefault(f => f.Covers(position));
+
     public bool HasSvg => !string.IsNullOrWhiteSpace(SvgUrl);
     public bool HasTiles => !string.IsNullOrWhiteSpace(BaseTilePathTemplate);
 

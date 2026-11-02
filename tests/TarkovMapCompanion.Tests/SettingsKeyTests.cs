@@ -1,4 +1,5 @@
 using TarkovMapCompanion.Data;
+using TarkovMapCompanion.Maps;
 using TarkovMapCompanion.Rendering;
 using TarkovMapCompanion.Settings;
 using Xunit;
@@ -129,6 +130,25 @@ public sealed class SettingsKeyTests
         {
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* best effort */ }
         }
+    }
+
+    [Fact]
+    public void AutoFloorSwitchKeys_AreRealMapsInTheCatalog()
+    {
+        // Keyed by GameMap.NormalizedName, so a renamed map turns into a switch that silently never
+        // applies. Same shape as the PoiKind keys above: the key space is checked against the thing
+        // that will look it up.
+        var catalog = MapCatalog.LoadEmbedded();
+        var known = catalog.Maps.Select(m => m.NormalizedName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var settings = new AppSettings();
+        settings.AutoFloorSwitch["customs"] = true;
+        settings.AutoFloorSwitch["woods"] = false;
+
+        var orphans = settings.AutoFloorSwitch.Keys.Where(k => !known.Contains(k)).ToArray();
+
+        Assert.True(orphans.Length == 0, $"floor-follow keys name no such map: {string.Join(", ", orphans)}");
+        Assert.All(settings.AutoFloorSwitch.Keys, key => Assert.True(catalog.Find(key) is not null));
     }
 
     [Fact]

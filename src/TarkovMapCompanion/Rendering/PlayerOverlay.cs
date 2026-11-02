@@ -251,19 +251,18 @@ public sealed class PlayerOverlay : IMapOverlay
         canvas.RestoreToCount(restore);
     }
 
+    /// <summary>
+    /// False when the fix belongs to a floor that is switched off, so the caller draws it dimmed
+    /// instead of hiding it -- losing the marker entirely because the player walked into a
+    /// basement would be worse than showing it faintly.
+    /// </summary>
     private bool IsOnDisplayedFloor(GameMap map, PlayerFix fix)
     {
-        if (map.Floors.Count == 0)
-            return true;
+        // FloorAt already covers the no-floors case: a map with none never matches, so every fix
+        // lands on the base level and is always drawn.
+        if (map.FloorAt(fix.Position) is not { } floor)
+            return true;                  // no floor claims it: base level, always drawn
 
-        // Any floor that claims this height and is switched on counts as a match.
-        foreach (var floor in map.Floors)
-        {
-            if (floor.Covers(fix.Position))
-                return ActiveFloors.Contains(floor.Name);
-        }
-
-        // No floor claims it, so it belongs to the base level, which is always drawn.
-        return true;
+        return ActiveFloors.Contains(floor.Name);
     }
 }

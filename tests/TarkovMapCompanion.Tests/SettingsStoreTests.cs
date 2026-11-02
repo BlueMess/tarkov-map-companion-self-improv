@@ -209,4 +209,43 @@ public sealed class SettingsStoreTests : IDisposable
     {
         Assert.Equal(AppSettings.Current, new AppSettings().Version);
     }
+
+    /// <summary>
+    /// The per-map floor-follow switch is a dictionary of map names, so it has to survive the round
+    /// trip rather than fall back to "off" on the next launch.
+    /// </summary>
+    [Fact]
+    public void AutoFloorSwitch_RoundTripsAndAnAbsentMapReadsAsOff()
+    {
+        var store = new SettingsStore(_path);
+
+        var original = new AppSettings();
+        original.AutoFloorSwitch["customs"] = true;
+
+        store.Save(original);
+        var loaded = store.Load();
+
+        Assert.True(loaded.AutoFloorSwitchFor("customs"));
+        Assert.True(loaded.AutoFloorSwitch.ContainsKey("customs"));
+
+        // Opt-in per map: a map nobody switched on must not start following on its own, and that is
+        // a missing key rather than a false one.
+        Assert.False(loaded.AutoFloorSwitch.ContainsKey("woods"));
+        Assert.False(loaded.AutoFloorSwitchFor("woods"));
+        Assert.False(loaded.AutoFloorSwitchFor(null));
+    }
+
+    /// <summary>
+    /// A hand-edited <c>"autoFloorSwitch": null</c> must be restored rather than crashing on the
+    /// first screenshot that asks which floor to show.
+    /// </summary>
+    [Fact]
+    public void Normalize_TurnsANullAutoFloorSwitchIntoAnEmptyOne()
+    {
+        var settings = new AppSettings { AutoFloorSwitch = null! };
+        settings.Normalize();
+
+        Assert.NotNull(settings.AutoFloorSwitch);
+        Assert.Empty(settings.AutoFloorSwitch);
+    }
 }

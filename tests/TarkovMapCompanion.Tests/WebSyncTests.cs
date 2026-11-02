@@ -566,6 +566,26 @@ public sealed class WebSyncTests
     }
 
     [Fact]
+    public void PlayerFloorIsTheOneTheMapDataClaimsForThatPosition()
+    {
+        var map = Catalog.Find("customs")!;
+        var player = new PlayerOverlay { Map = map };
+
+        // A dorms-height fix: 4.0 m falls in 2nd Floor's [2.7, 6.5] band and also in 3rd Floor's
+        // overlapping [5.7, 1000] band, so the answer pins the declaration-order rule rather than
+        // just checking that *some* floor name was copied through.
+        player.Add(Fix(200, 160) with { Position = new GamePosition(200, 4.0, 160) });
+
+        Assert.Equal("2nd Floor", SnapshotBuilder.BuildPlayer(map, player)!.Floor);
+
+        // Open ground at 4 m: the height bands still overlap but no footprint contains it, and a
+        // floor of null is what the client reads as the base level.
+        player.Add(Fix(-9000, -9000) with { Position = new GamePosition(-9000, 4.0, -9000) });
+
+        Assert.Null(SnapshotBuilder.BuildPlayer(map, player)!.Floor);
+    }
+
+    [Fact]
     public void ThePoiToggleEmptiesOnlyThePoiList()
     {
         var map = Catalog.Find("customs")!;

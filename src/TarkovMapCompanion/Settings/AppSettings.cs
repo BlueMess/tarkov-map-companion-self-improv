@@ -198,6 +198,22 @@ public sealed class AppSettings
     /// <summary>Whether the map's ground level is drawn. Off reveals an underground floor.</summary>
     public bool ShowBaseLayer { get; set; } = true;
 
+    /// <summary>
+    /// Per-map "follow the player's floor" switch, keyed by <c>GameMap.NormalizedName</c>.
+    /// </summary>
+    /// <remarks>
+    /// A missing key means off. The feature moves the view under the user, so it is opt-in and an
+    /// older settings file must not start switching floors on its own. That is also why this needs no
+    /// version bump or migration: an empty map is a valid, fully-defaulted state.
+    /// </remarks>
+    public Dictionary<string, bool> AutoFloorSwitch { get; set; } = new();
+
+    /// <summary>True when this map's switch is on. An absent key reads as off.</summary>
+    public bool AutoFloorSwitchFor(string? normalizedName) =>
+        normalizedName is not null
+        && AutoFloorSwitch.TryGetValue(normalizedName, out var on)
+        && on;
+
     // ---- Reading exits off the screenshot ----------------------------------
 
     /// <summary>
@@ -675,6 +691,14 @@ public sealed class AppSettings
 
         if (string.IsNullOrWhiteSpace(CurrentMap))
             CurrentMap = "customs";
+
+        // A hand-edited "poiLayers": null, "heatmapCategories": null or "autoFloorSwitch": null would
+        // otherwise throw a NullReferenceException deep in the render loop, on every screenshot.
+        // Only the dictionary itself is restored: backfilling keys here would make a preference that
+        // was deliberately turned off come back on the next load.
+        PoiLayers ??= new();
+        HeatmapCategories ??= new();
+        AutoFloorSwitch ??= new();
     }
 }
 

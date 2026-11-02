@@ -249,7 +249,18 @@ public partial class MinimapWindow : Window
 
     // Its own method only because bool is a value type, so it will not bind to the shared handler
     // the way the reference-typed event payloads do.
-    private void OnRaidStateChanged(object? sender, bool started) => OnRedrawWanted(sender, null);
+    private void OnRaidStateChanged(object? sender, bool started)
+    {
+        OnRedrawWanted(sender, null);
+
+        // A raid starting clears the player, so the floor badge describes a raid that is over. The
+        // map is deliberately not recentred here (that would jump to the middle of the map), so the
+        // badge is hidden on its own and stays hidden until the first screenshot reinstates it.
+        // The other transition -- back at the menu -- clears nothing, so the last fix still stands
+        // and the badge is left alone.
+        if (started)
+            Dispatcher.UIThread.Post(() => FloorBadge.IsVisible = false);
+    }
 
     private void OnMapChanged(object? sender, GameMap map) =>
         Dispatcher.UIThread.Post(async void () =>
@@ -287,14 +298,53 @@ public partial class MinimapWindow : Window
 
         RangeText.Text = Localizer.Loc("Minimap.Range", _settings.MinimapRangeMeters);
 
-        var center = _session.Player.Current is { } fix
-            ? map.ToBase(fix.Position)
+        // One read of the fix for both the badge and the centre, so the two can never describe
+        // different screenshots.
+        var fix = _session.Player.Current;
+        UpdateFloorBadge(map, fix);
+
+        var center = fix is { } current
+            ? map.ToBase(current.Position)
             : map.SvgBaseRect.Center;
 
         var viewport = _canvas.Viewport;
         var shortest = Math.Min(Math.Max(viewport.Width, 1), Math.Max(viewport.Height, 1));
 
         _canvas.ShowAt(center, shortest / (halfExtent * 2.0));
+    }
+
+    /// <summary>
+    /// Names the level the player is standing on, in the corner of the map.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Hidden until a screenshot has been read: before that there is no position, so the only
+    /// honest thing to draw is nothing. It comes back as soon as a fix lands, because every path
+    /// that moves the map (a fix, a map change, a zoom, opening the window) ends up here.
+    /// </para>
+    /// <para>
+    /// No floor claiming the position means the base level -- the same reading <c>PlayerOverlay</c>
+    /// and WebSync use -- which the floor toggles call <c>Layer.Ground</c>. A map with no floors at
+    /// all reads the same way, since there is still a ground level to stand on.
+    /// </para>
+    /// <para>
+    /// The name goes through <see cref="Localizer.FloorLabel"/> and never onto the label raw:
+    /// <c>MapFloor.Name</c> is the layer lookup key, so it stays English in a Chinese UI.
+    /// </para>
+    /// </remarks>
+    private void UpdateFloorBadge(GameMap map, Screenshots.PlayerFix? fix)
+    {
+        if (fix is null)
+        {
+            FloorBadge.IsVisible = false;
+            return;
+        }
+
+        FloorBadgeText.Text = map.FloorAt(fix.Position) is { } floor
+            ? Localizer.FloorLabel(floor.Name)
+            : Localizer.Loc("Layer.Ground");
+
+        FloorBadge.IsVisible = true;
     }
 
     private void Rescale(double factor)

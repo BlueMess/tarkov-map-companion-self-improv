@@ -60,6 +60,34 @@
 
       <!-- The grip floats over the map's own corner rather than reserving a row for itself. -->
       <Panel Name="MinimapHost">
+
+        <!--
+          Which level the player is standing on. Overlaid on the map rather than given a row, so
+          the canvas and the grip keep every pixel they had.
+
+          The scrim is the header's own surface at 0.88, nearly solid because this has to stay
+          readable over bright artwork, and it is a separate element from the label so the text
+          keeps full opacity: Opacity on the Panel would fade the text with it.
+
+          Hit-test invisible, like the canvas underneath: a press here has to reach the window and
+          start a drag. Bottom-left, clear of the grip, and MaxWidth keeps it clear of the grip even
+          at MinWidth, where a long localized floor name would otherwise run into it.
+        -->
+        <Panel Name="FloorBadge" IsVisible="False" IsHitTestVisible="False"
+               HorizontalAlignment="Left" VerticalAlignment="Bottom"
+               Margin="6,0,0,6">
+          <Border Background="{DynamicResource SurfacePanelBrush}"
+                  BorderBrush="{DynamicResource BorderSubtleBrush}"
+                  BorderThickness="1"
+                  CornerRadius="{DynamicResource RadiusSmall}"
+                  Opacity="0.88" />
+
+          <TextBlock Name="FloorBadgeText" Classes="secondary" FontSize="10"
+                     MaxWidth="140" Margin="5,1"
+                     VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis" />
+        </Panel>
+
         <Path Name="ResizeGrip"
               Width="14" Height="14" Stretch="None"
               HorizontalAlignment="Right" VerticalAlignment="Bottom"

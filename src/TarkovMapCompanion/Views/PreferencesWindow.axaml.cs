@@ -3,6 +3,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using TarkovMapCompanion.Data;
 using TarkovMapCompanion.Localization;
+using TarkovMapCompanion.Maps;
 using TarkovMapCompanion.Settings;
 
 namespace TarkovMapCompanion.Views;
@@ -18,6 +19,19 @@ public partial class PreferencesWindow : Window
     private readonly MapSession? _session;
     private readonly Action _persist;
 
+    // Only needed to draw the per-map floor-follow rows, so it is optional: the previewer has no
+    // catalog, and the window still opens with an empty list rather than failing.
+    private readonly MapCatalog? _catalog;
+
+    // The rows as they were built, in map order. Kept so "select all" writes the same rows the user
+    // is looking at instead of walking the visual tree and guessing which children are maps.
+    private readonly List<(string NormalizedName, CheckBox Box)> _floorFollowRows = new();
+
+    // True while several boxes are being written at once (the initial build, or "select all"). The
+    // per-row handler returns early on it: without this, setting thirteen boxes persists thirteen
+    // times, and the aggregate box would read a half-written list as a user edit.
+    private bool _syncingFloorFollow;
+
     private bool _loading = true;
 
     // Which category tab was open last time. Static so it survives the window being closed and
@@ -29,11 +43,12 @@ public partial class PreferencesWindow : Window
     {
     }
 
-    public PreferencesWindow(AppSettings settings, MapSession? session, Action persist)
+    public PreferencesWindow(AppSettings settings, MapSession? session, Action persist, MapCatalog? catalog = null)
     {
         _settings = settings;
         _session = session;
         _persist = persist;
+        _catalog = catalog;
 
         InitializeComponent();
 
@@ -196,6 +211,145 @@ public partial class PreferencesWindow : Window
 
         AllowNetworkBox.IsChecked = _settings.AllowNetwork;
         UpdateDataStatus();
+
+        // Built here rather than in Wire(): the rows are controls, so they belong with everything else
+        // this method populates, and LoadValues runs while _loading is true.
+        BuildFloorFollowRows();
+    }
+
+    // ---- Floor follow -------------------------------------------------------
+
+    /// <summary>
+    /// One checkbox per map, so "follow the player's floor" can be turned on for the maps you play
+    /// and left alone for the rest.
+    /// </summary>
+    /// <remarks>
+    /// Controls are created here rather than in XAML because the map list is data. Maps with no
+    /// second floor are listed anyway and disabled: a map silently missing from the list reads as a
+    /// bug, whereas a greyed row with a tooltip says why there is nothing to switch.
+    /// </remarks>
+    private void BuildFloorFollowRows()
+    {
+        FloorFollowList.Children.Clear();
+        _floorFollowRows.Clear();
+
+        // Rewriting the rows wholesale is not an edit, so the handlers stay quiet: nothing is
+        // persisted from here, and LoadValues is the only caller.
+        var wasSyncing = _syncingFloorFollow;
+        _syncingFloorFollow = true;
+        try
+        {
+            if (_catalog is not null)
+            {
+                foreach (var map in _catalog.Maps)
+                {
+                    var normalized = map.NormalizedName;
+                    var hasFloors = map.Floors.Count > 0;
+
+                    var box = new CheckBox
+                    {
+                        Content = MapNames.Display(normalized),
+                        IsChecked = _settings.AutoFloorSwitchFor(normalized),
+                        IsEnabled = hasFloors,
+                        FontSize = 12,
+
+                        // Two per row halves the block; the 2 px under each one is what keeps the
+                        // rows from reading as a single dense paragraph, matching the spacing the
+                        // rest of the page uses between stacked controls.
+                        Margin = new Avalonia.Thickness(0, 0, 0, 2),
+                    };
+
+                    if (!hasFloors)
+                        box.SetValue(ToolTip.TipProperty, Localizer.Loc("Prefs.FloorFollowNoFloors"));
+
+                    box.IsCheckedChanged += (_, _) => OnFloorFollowRowChanged(normalized, box);
+
+                    FloorFollowList.Children.Add(box);
+                    _floorFollowRows.Add((normalized, box));
+                }
+            }
+
+            // Last, not first: the aggregate is a statement about the rows, so it is derived once
+            // they all exist.
+            RefreshFloorFollowAll();
+        }
+        finally
+        {
+            _syncingFloorFollow = wasSyncing;
+        }
+    }
+
+    /// <summary>One map's switch changed: persist that one value, then re-derive "select all".</summary>
+    private void OnFloorFollowRowChanged(string normalizedName, CheckBox box)
+    {
+        if (_syncingFloorFollow)
+            return;
+
+        Apply(() => _settings.AutoFloorSwitch[normalizedName] = box.IsChecked ?? false);
+        RefreshFloorFollowAll();
+    }
+
+    /// <summary>
+    /// Writes "select all"'s new state onto every switchable map, and persists once.
+    /// </summary>
+    /// <remarks>
+    /// The greyed rows are skipped in both directions: they cannot be switched on, so "all" cannot
+    /// mean them, and writing them would leave a floor-follow switch in settings.json for a map with
+    /// one level. Settings are assigned before the boxes are, both inside the guard, so an
+    /// interrupted write leaves the stored state and the UI agreeing rather than half-applied.
+    /// </remarks>
+    private void SetAllFloorFollow()
+    {
+        var on = FloorFollowAllBox.IsChecked ?? false;
+        var switchable = _floorFollowRows.Where(r => r.Box.IsEnabled).ToArray();
+
+        var wasSyncing = _syncingFloorFollow;
+        _syncingFloorFollow = true;
+        try
+        {
+            foreach (var (normalizedName, _) in switchable)
+                _settings.AutoFloorSwitch[normalizedName] = on;
+
+            foreach (var (_, box) in switchable)
+                box.IsChecked = on;
+        }
+        finally
+        {
+            _syncingFloorFollow = wasSyncing;
+        }
+    }
+
+    /// <summary>
+    /// Keeps "select all" a statement of fact: checked only when every switchable map is on.
+    /// </summary>
+    /// <remarks>
+    /// Two-state rather than indeterminate on purpose. A half-ticked box has to decide what a click
+    /// means — clear everything, or complete the set — and whichever answer it gives surprises the
+    /// person who expected the other. Unchecked-until-all means one click always means the same
+    /// thing: turn every map on. The four maps with no second floor are left out of the verdict, so
+    /// they cannot hold it unchecked forever.
+    /// </remarks>
+    private void RefreshFloorFollowAll()
+    {
+        var switchable = _floorFollowRows.Where(r => r.Box.IsEnabled).ToArray();
+
+        // Saved and restored rather than cleared: this runs from inside the build, which is itself
+        // under the guard, and clearing it there would end that guard early.
+        var wasSyncing = _syncingFloorFollow;
+        _syncingFloorFollow = true;
+        try
+        {
+            FloorFollowAllBox.IsChecked =
+                switchable.Length > 0 && switchable.All(r => r.Box.IsChecked == true);
+
+            // Nothing to switch on — the previewer builds no rows. A live control over an empty list
+            // is one that does nothing when clicked.
+            FloorFollowAllBox.IsEnabled = switchable.Length > 0;
+        }
+        finally
+        {
+            _syncingFloorFollow = wasSyncing;
+        }
     }
 
     // ---- Wire ---------------------------------------------------------------
@@ -303,6 +457,17 @@ public partial class PreferencesWindow : Window
 
         MinimapClickThroughBox.IsCheckedChanged += (_, _) => Apply(() =>
             _settings.MinimapClickThrough = MinimapClickThroughBox.IsChecked ?? false);
+
+        // The per-map floor-follow rows are wired where they are built; this is the one row of that
+        // panel that exists in XAML. RefreshFloorFollowAll writes it too, which is what the guard is
+        // for — a programmatic tick of the aggregate is not a request to switch every map on.
+        FloorFollowAllBox.IsCheckedChanged += (_, _) =>
+        {
+            if (_syncingFloorFollow)
+                return;
+
+            Apply(SetAllFloorFollow);
+        };
 
         ShowOffScreenPeersBox.IsCheckedChanged += (_, _) => Apply(() =>
         {

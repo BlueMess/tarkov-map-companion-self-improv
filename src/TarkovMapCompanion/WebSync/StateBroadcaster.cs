@@ -148,9 +148,9 @@ internal static class SnapshotBuilder
         if (player.Current is not { } fix)
             return null;
 
-        // The floor is the first one that claims this height; no floor claiming it means the
+        // The floor is the first one that claims this position; no floor claiming it means the
         // base level, which the wire format reports as null.
-        var floor = map?.Floors.FirstOrDefault(f => f.Covers(fix.Position))?.Name;
+        var floor = map?.FloorAt(fix.Position)?.Name;
 
         // ScreenAngleDegrees folds in the map's coordinate rotation plus the 180-degree flip;
         // re-deriving it client-side would reverse the marker on rotated maps, so it is

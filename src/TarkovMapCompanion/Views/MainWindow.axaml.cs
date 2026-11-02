@@ -27,6 +27,28 @@ public partial class MainWindow : Window
 
     private readonly Dictionary<PoiKind, CheckBox> _layerToggles = [];
 
+    /// <summary>
+    /// The floor checkboxes for the loaded map, keyed by <see cref="MapFloor.Name"/>.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilt with the list on every map switch, so it is stale for the whole of
+    /// <see cref="BuildFloorList"/>. Anything that reads it has to tolerate a name that is not
+    /// there yet.
+    /// </remarks>
+    private readonly Dictionary<string, CheckBox> _floorToggles = new(StringComparer.Ordinal);
+
+    /// <summary>The ground (base layer) checkbox, or null when the map draws only one level.</summary>
+    private CheckBox? _groundToggle;
+
+    /// <summary>
+    /// True while a programmatic re-sync is setting the floor checkboxes.
+    /// </summary>
+    /// <remarks>
+    /// Every handler below writes settings and pushes layer state, so a sync that raised them would
+    /// save the transient follow-the-player state over the user's own ground-layer preference.
+    /// </remarks>
+    private bool _syncingFloors;
+
     private GameMap? _suggestedMap;
     private bool _suppressMapSelectorEvent;
     private bool _suppressExtractSelectionEvent;
@@ -405,7 +427,7 @@ public partial class MainWindow : Window
 
     private async Task ShowPreferencesAsync()
     {
-        await new PreferencesWindow(_settings, _session, PersistSettings).ShowDialog(this);
+        await new PreferencesWindow(_settings, _session, PersistSettings, _catalog).ShowDialog(this);
 
         // Preferences can change things the main window mirrors, so re-read rather than trying to
         // keep the two in sync field by field. Follow Player is deliberately absent: it lives on
@@ -2699,6 +2721,8 @@ public partial class MainWindow : Window
     private void BuildFloorList(GameMap map)
     {
         FloorList.Children.Clear();
+        _floorToggles.Clear();
+        _groundToggle = null;
         FloorOverlay.IsVisible = map.Floors.Count > 0;
 
         if (map.Floors.Count == 0)
@@ -2714,17 +2738,27 @@ public partial class MainWindow : Window
             [ToolTip.TipProperty] = Localizer.Loc("Layer.GroundTip"),
         };
 
-        ground.IsCheckedChanged += (_, _) => Apply(() =>
+        ground.IsCheckedChanged += (_, _) =>
         {
-            _canvas.ShowBaseLayer = ground.IsChecked ?? false;
-            _settings.ShowBaseLayer = _canvas.ShowBaseLayer;
-            _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
-            UpdateFloorHint();
-            SyncMinimapLayers();
-            _canvas.InvalidateVisual();
-        });
+            // A programmatic re-sync is describing state that is already applied, and this handler
+            // is the one that persists: letting it run would write the transient
+            // follow-the-player ground state into AppSettings.ShowBaseLayer.
+            if (_syncingFloors)
+                return;
+
+            Apply(() =>
+            {
+                _canvas.ShowBaseLayer = ground.IsChecked ?? false;
+                _settings.ShowBaseLayer = _canvas.ShowBaseLayer;
+                _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
+                UpdateFloorHint();
+                SyncMinimapLayers();
+                _canvas.InvalidateVisual();
+            });
+        };
 
         FloorList.Children.Add(ground);
+        _groundToggle = ground;
 
         foreach (var floor in map.Floors)
         {
@@ -2738,6 +2772,9 @@ public partial class MainWindow : Window
             var name = floor.Name;
             toggle.IsCheckedChanged += (_, _) =>
             {
+                if (_syncingFloors)
+                    return;
+
                 if (toggle.IsChecked.GetValueOrDefault())
                     _canvas.ActiveFloors.Add(name);
                 else
@@ -2750,9 +2787,66 @@ public partial class MainWindow : Window
             };
 
             FloorList.Children.Add(toggle);
+            _floorToggles[name] = toggle;
         }
 
         UpdateFloorHint();
+    }
+
+    /// <summary>
+    /// Brings the floor checkboxes back in line with the canvas after something other than the user
+    /// changed the layers.
+    /// </summary>
+    /// <remarks>
+    /// Every checkbox in the dictionary is written, and names that are not in it are simply absent
+    /// rather than created: this runs mid-map-switch too, where <see cref="BuildFloorList"/> has
+    /// already emptied the dictionary and not yet filled it.
+    /// </remarks>
+    private void SyncFloorToggles()
+    {
+        _syncingFloors = true;
+        try
+        {
+            if (_groundToggle is not null)
+                _groundToggle.IsChecked = _canvas.ShowBaseLayer;
+
+            foreach (var (name, toggle) in _floorToggles)
+                toggle.IsChecked = _canvas.ActiveFloors.Contains(name);
+        }
+        finally
+        {
+            _syncingFloors = false;
+        }
+    }
+
+    /// <summary>
+    /// Puts the map on the floor the player is standing on, for maps where that is switched on.
+    /// </summary>
+    /// <remarks>
+    /// Skipped for every map whose switch is off, which is the default: the view moving under you is
+    /// only helpful if you asked for it. The resulting layer state is transient view state and is
+    /// deliberately not written to <see cref="AppSettings.ShowBaseLayer"/> -- a map switch or a
+    /// restart puts the ground back the way the user set it.
+    /// </remarks>
+    private void FollowPlayerFloor(PlayerFix fix)
+    {
+        if (_canvas.Map is not { } map)
+            return;
+
+        if (FloorFollow.Decide(map, fix.Position, _settings.AutoFloorSwitchFor(map.NormalizedName),
+                _canvas.ActiveFloors, _canvas.ShowBaseLayer) is not { } view)
+            return;
+
+        _canvas.ActiveFloors.Clear();
+        foreach (var name in view.Floors)
+            _canvas.ActiveFloors.Add(name);
+        _canvas.ShowBaseLayer = view.ShowBaseLayer;      // transient: never written to settings
+
+        _session.ApplyFloorState(_canvas.ActiveFloors, _canvas.ShowBaseLayer);
+        SyncFloorToggles();
+        UpdateFloorHint();
+        SyncMinimapLayers();
+        _canvas.InvalidateVisual();
     }
 
     /// <summary>
@@ -2798,6 +2892,10 @@ public partial class MainWindow : Window
         // Distances in the list are relative to the player, so a new fix changes all of them --
         // and reorders the list entirely when sorting by distance.
         RebuildExtractList();
+
+        // Before the camera moves, so the view it centers on is the floor the player is actually on.
+        // Only acts when this map's "follow the floor" switch is on; a no-op otherwise.
+        FollowPlayerFloor(fix);
 
         // Focus mode owns the view when it is on, so following would fight it.
         if (FocusToggle.IsChecked.GetValueOrDefault() && _session.ExtractLine.GuideBase is not null)

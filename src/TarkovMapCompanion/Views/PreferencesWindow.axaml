@@ -386,6 +386,35 @@
                 </StackPanel>
               </Border>
 
+              <!-- Floor follow -->
+              <Border Classes="panel" Padding="12">
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="heading" Text="{loc:Tr Prefs.FloorFollow}" />
+                  <TextBlock Classes="secondary" FontSize="11" TextWrapping="Wrap"
+                             Text="{loc:Tr Prefs.FloorFollowHint}" />
+
+                  <!--
+                    Rows are generated in code: one checkbox per map, disabled where the map has no
+                    floor to switch to. Two columns instead of one, because thirteen single rows made
+                    this the tallest panel on the page for a list of names that are all short. The
+                    grid fills left to right and then wraps, so the alphabetical run reads across
+                    each row rather than down one column and back to the top of the next.
+                  -->
+                  <UniformGrid Name="FloorFollowList" Columns="2" />
+
+                  <!--
+                    "Select all" is a bulk action on the list above, not a fourteenth map: it sits
+                    outside the grid, under a hairline rule, and a step heavier than the rows. All
+                    three signals are cheap and each one alone is enough to stop it reading as an
+                    entry in the list. Stretched so the whole band under the rule is the click
+                    target, which is what a list-wide "select all" is everywhere else.
+                  -->
+                  <Border Height="1" Margin="0,2,0,0" Background="{DynamicResource BorderSubtleBrush}" />
+                  <CheckBox Name="FloorFollowAllBox" Content="{loc:Tr Prefs.FloorFollowAll}"
+                            FontWeight="SemiBold" HorizontalAlignment="Stretch" />
+                </StackPanel>
+              </Border>
+
               <!-- Route markers -->
               <Border Classes="panel" Padding="12">
                 <StackPanel Spacing="6">
